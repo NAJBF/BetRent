@@ -204,7 +204,7 @@ PASSWORD_HASHERS = [
 UNFOLD = {
     "SITE_TITLE": "BetRent Admin",
     "SITE_HEADER": "BetRent Marketplace",
-    "SITE_SYMBOL": "home_work", # Material icon
+    "SITE_SYMBOL": "home_work",
     "SHOW_HISTORY": True,
     "SHOW_VIEW_ON_SITE": True,
     "COLORS": {
@@ -221,6 +221,91 @@ UNFOLD = {
             "900": "88 28 135",
             "950": "59 7 100",
         },
+    },
+    "SIDEBAR": {
+        "show_search": True,
+        "show_all_applications": False,
+        "navigation": [
+            {
+                "title": "Accounts & Auth",
+                "separator": True,
+                "items": [
+                    {
+                        "title": "Users",
+                        "icon": "people",
+                        "link": "/admin/accounts/user/",
+                    },
+                    {
+                        "title": "Groups",
+                        "icon": "group_work",
+                        "link": "/admin/auth/group/",
+                    },
+                ],
+            },
+            {
+                "title": "Marketplace",
+                "separator": True,
+                "items": [
+                    {
+                        "title": "Listings",
+                        "icon": "home_work",
+                        "link": "/admin/listings/listing/",
+                    },
+                    {
+                        "title": "Categories",
+                        "icon": "category",
+                        "link": "/admin/categories/category/",
+                    },
+                    {
+                        "title": "Listing Images",
+                        "icon": "image",
+                        "link": "/admin/listings/listingimage/",
+                    },
+                ],
+            },
+            {
+                "title": "Operations",
+                "separator": True,
+                "items": [
+                    {
+                        "title": "Bookings",
+                        "icon": "event_available",
+                        "link": "/admin/bookings/booking/",
+                    },
+                    {
+                        "title": "Payments",
+                        "icon": "payments",
+                        "link": "/admin/payments/payment/",
+                    },
+                    {
+                        "title": "Reviews",
+                        "icon": "star",
+                        "link": "/admin/reviews/review/",
+                    },
+                ],
+            },
+            {
+                "title": "Security (Axes)",
+                "separator": True,
+                "items": [
+                    {
+                        "title": "Access Attempts",
+                        "icon": "lock_open",
+                        "link": "/admin/axes/accessattempt/",
+                    },
+                    {
+                        "title": "Access Failures",
+                        "icon": "lock",
+                        "link": "/admin/axes/accessfailurelog/",
+                    },
+                    {
+                        "title": "Access Logs",
+                        "icon": "history_edu",
+                        "link": "/admin/axes/accesslog/",
+                    },
+                ],
+            },
+        ],
     },
 }
 
