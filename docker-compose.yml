@@ -1,0 +1,30 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports: ["8000:8000"]
+    env_file: [.env.docker]
+    volumes: [".:/app", "media_volume:/app/media"]
+    depends_on: {db: {condition: service_healthy}}
+  db:
+    image: postgres:16-alpine
+    environment: [POSTGRES_DB=BetRent, POSTGRES_PASSWORD=postgres]
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U postgres"], interval: 5s, timeout: 5s, retries: 5}
+    image: redis:7-alpine
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    env_file: [.env.docker]
+    volumes: [".:/app"]
+    depends_on: [db, redis]
+  nginx:
+    image: nginx:alpine
+    ports: ["80:80"]
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
+      - ./staticfiles:/app/static
+      - ./media:/app/media
+    depends_on: [api]
+volumes: {media_volume: }

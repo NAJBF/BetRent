@@ -1,0 +1,42 @@
+[project]
+name = "betrent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "argon2-cffi>=25.1.0",
+    "celery[redis]>=5.3.1",
+    "dj-database-url>=3.1.2",
+    "django>=6.0.5",
+    "django-axes>=8.3.1",
+    "django-celery-beat>=2.9.0",
+    "django-cors-headers>=4.9.0",
+    "django-filter>=25.2",
+    "django-health-check>=4.4.0",
+    "django-redis>=6.0.0",
+    "django-storages[s3]>=1.14.6",
+    "django-unfold>=0.93.0",
+    "djangorestframework>=3.17.1",
+    "djangorestframework-simplejwt>=5.5.1",
+    "djoser>=2.3.3",
+    "drf-spectacular>=0.29.0",
+    "gunicorn>=26.0.0",
+    "pillow>=12.2.0",
+    "psycopg[binary,pool]>=3.3.4",
+    "python-dotenv>=1.2.2",
+    "redis>=7.4.0",
+    "sentry-sdk[django]>=2.59.0",
+    "whitenoise[brotli]>=6.12.0",
+]
+
+[dependency-groups]
+dev = [
+    "black>=26.3.1",
+    "django-debug-toolbar>=6.3.0",
+    "django-extensions>=4.1",
+    "ipython>=9.13.0",
+    "pytest>=9.0.3",
+    "pytest-django>=4.12.0",
+    "ruff>=0.15.12",
+]

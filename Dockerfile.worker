@@ -1,0 +1,7 @@
+FROM python:3.12-slim
+WORKDIR /app
+RUN pip install uv
+COPY . .
+RUN uv sync --frozen
+ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
+CMD ["celery", "-A", "BetRent", "worker", "--loglevel=info"]

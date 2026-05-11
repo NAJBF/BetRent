@@ -1,0 +1,9 @@
+FROM python:3.12-slim
+WORKDIR /app
+RUN pip install uv
+COPY . .
+RUN uv sync --frozen
+ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
+RUN chmod +x entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["gunicorn", "BetRent.wsgi:application", "--bind", "0.0.0.0:8000"]

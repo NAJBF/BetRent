@@ -1,0 +1,115 @@
+from rest_framework import generics, status
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+from django_filters.rest_framework import DjangoFilterBackend
+
+from core.permissions import IsLandlord, IsOwnerOrAdmin
+from core.pagination import BetRentPagination
+from .models import Listing, ListingImage
+from .serializers import (
+    ListingListSerializer,
+    ListingDetailSerializer,
+    ListingCreateSerializer,
+    ListingUpdateSerializer,
+    ListingImageCreateSerializer,
+)
+from .filters import ListingFilter
+
+
+class ListingListView(generics.ListAPIView):
+    """GET /api/v1/listings/ — Public: search, filter, paginate listings."""
+
+    serializer_class = ListingListSerializer
+    permission_classes = [AllowAny]
+    pagination_class = BetRentPagination
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = ListingFilter
+
+    def get_queryset(self):
+        return (
+            Listing.objects.filter(is_active=True)
+            .select_related("category", "owner")
+            .prefetch_related("images", "reviews")
+        )
+
+
+class ListingDetailView(generics.RetrieveAPIView):
+    """GET /api/v1/listings/{slug} — Public: view detail, auto-increment views."""
+
+    serializer_class = ListingDetailSerializer
+    permission_classes = [AllowAny]
+    lookup_field = "slug"
+
+    def get_queryset(self):
+        return (
+            Listing.objects.filter(is_active=True)
+            .select_related("category", "owner")
+            .prefetch_related("images", "reviews")
+        )
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        instance.increment_views()
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+
+
+class MyListingsView(generics.ListAPIView):
+    """GET /api/v1/listings/my/listings — View own listings."""
+
+    serializer_class = ListingListSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = BetRentPagination
+
+    def get_queryset(self):
+        return (
+            Listing.objects.filter(owner=self.request.user)
+            .select_related("category", "owner")
+            .prefetch_related("images", "reviews")
+        )
+
+
+class ListingCreateView(generics.CreateAPIView):
+    """POST /api/v1/listings/ — Landlord: create a listing."""
+
+    serializer_class = ListingCreateSerializer
+    permission_classes = [IsLandlord]
+
+
+class ListingUpdateView(generics.UpdateAPIView):
+    """PUT /api/v1/listings/{id} — Owner: update listing fields."""
+
+    serializer_class = ListingUpdateSerializer
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
+    queryset = Listing.objects.all()
+    lookup_field = "pk"
+    lookup_url_kwarg = "listing_id"
+
+
+class ListingDeleteView(generics.DestroyAPIView):
+    """DELETE /api/v1/listings/{id} — Owner: soft-delete listing."""
+
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
+    queryset = Listing.objects.all()
+    lookup_field = "pk"
+    lookup_url_kwarg = "listing_id"
+
+    def perform_destroy(self, instance):
+        # Soft delete — deactivate instead of removing
+        instance.is_active = False
+        instance.save(update_fields=["is_active"])
+
+
+class ListingImageCreateView(generics.CreateAPIView):
+    """POST /api/v1/listings/{id}/images — Owner: add image to listing."""
+
+    serializer_class = ListingImageCreateSerializer
+    permission_classes = [IsAuthenticated]
+
+    def perform_create(self, serializer):
+        listing = Listing.objects.get(pk=self.kwargs["listing_id"])
+        # Verify ownership
+        if listing.owner != self.request.user and self.request.user.role != "admin":
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("You can only add images to your own listings.")
+        serializer.save(listing=listing)
