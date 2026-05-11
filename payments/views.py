@@ -134,3 +134,46 @@ class ChapaWebhookView(APIView):
             payment.save(update_fields=["status"])
 
         return Response({"status": "received"}, status=status.HTTP_200_OK)
+
+
+class PaymentManualUpdateView(APIView):
+    """
+    PUT /api/v1/payments/{payment_id}/manual-update/
+    Allows Admin or Listing Owner to manually mark a payment as completed.
+    Useful for 'cash' or 'bank_transfer' methods.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request, payment_id):
+        try:
+            payment = Payment.objects.select_related(
+                "booking", "booking__listing"
+            ).get(id=payment_id)
+        except Payment.DoesNotExist:
+            raise NotFound("Payment record not found.")
+
+        user = request.user
+        # Permission: Only Admin or the Listing Owner (the person getting paid)
+        if user.role != "admin" and payment.booking.listing.owner != user:
+            raise PermissionDenied(
+                "You do not have permission to manually update this payment."
+            )
+
+        new_status = request.data.get("status")
+        if new_status not in ["completed", "failed"]:
+            return Response(
+                {"detail": "Invalid status. Use 'completed' or 'failed'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        payment.status = new_status
+        payment.save(update_fields=["status", "updated_at"])
+
+        # If completed, update the booking status too
+        if new_status == "completed":
+            booking = payment.booking
+            booking.status = "paid"
+            booking.save(update_fields=["status", "updated_at"])
+
+        return Response(PaymentDetailSerializer(payment).data)
