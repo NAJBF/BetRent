@@ -3,6 +3,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.exceptions import NotFound, PermissionDenied
+from drf_spectacular.utils import extend_schema
 
 from .models import Payment
 from .serializers import (
@@ -19,6 +20,7 @@ class PaymentInitiateView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(request=PaymentInitiateSerializer, responses={201: PaymentDetailSerializer})
     def post(self, request):
         serializer = PaymentInitiateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -60,6 +62,7 @@ class PaymentVerifyView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses={200: PaymentDetailSerializer})
     def get(self, request, tx_ref):
         try:
             payment = Payment.objects.select_related("booking").get(
@@ -107,6 +110,7 @@ class ChapaWebhookView(APIView):
 
     permission_classes = [AllowAny]
 
+    @extend_schema(request=ChapaWebhookSerializer, responses={200: None})
     def post(self, request):
         serializer = ChapaWebhookSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -145,6 +149,7 @@ class PaymentManualUpdateView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(request=None, responses={200: PaymentDetailSerializer}) # request is simple status string
     def put(self, request, payment_id):
         try:
             payment = Payment.objects.select_related(

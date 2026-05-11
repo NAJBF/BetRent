@@ -2,6 +2,7 @@ from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from drf_spectacular.utils import extend_schema
 from django.db.models import Avg, Count
 
 from core.permissions import IsOwnerOrAdmin
@@ -12,6 +13,10 @@ from .serializers import ReviewCreateSerializer, ReviewSerializer, ReviewStatsSe
 
 class ReviewCreateView(generics.CreateAPIView):
     """POST /api/v1/reviews/ — Submit a review (requires completed booking)."""
+
+    @extend_schema(responses={201: ReviewSerializer})
+    def post(self, request, *args, **kwargs):
+        return super().post(request, *args, **kwargs)
 
     serializer_class = ReviewCreateSerializer
     permission_classes = [IsAuthenticated]
@@ -34,6 +39,7 @@ class ListingReviewStatsView(APIView):
 
     permission_classes = [AllowAny]
 
+    @extend_schema(responses={200: ReviewStatsSerializer})
     def get(self, request, listing_id):
         stats = Review.objects.filter(listing_id=listing_id).aggregate(
             average_rating=Avg("rating"),

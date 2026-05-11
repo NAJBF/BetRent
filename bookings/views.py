@@ -3,6 +3,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.exceptions import PermissionDenied, NotFound
+from drf_spectacular.utils import extend_schema
 
 from core.pagination import BetRentPagination
 from .models import Booking
@@ -15,6 +16,10 @@ from .serializers import (
 
 class BookingCreateView(generics.CreateAPIView):
     """POST /api/v1/bookings/ — Create a booking request (auto-calculates price)."""
+
+    @extend_schema(responses={201: BookingDetailSerializer})
+    def post(self, request, *args, **kwargs):
+        return super().post(request, *args, **kwargs)
 
     serializer_class = BookingCreateSerializer
     permission_classes = [IsAuthenticated]
@@ -82,6 +87,7 @@ class BookingStatusUpdateView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(request=BookingStatusUpdateSerializer, responses={200: BookingDetailSerializer})
     def put(self, request, booking_id):
         try:
             booking = (

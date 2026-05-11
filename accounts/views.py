@@ -3,6 +3,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
+from drf_spectacular.utils import extend_schema
 
 from core.permissions import IsAdminRole
 from core.pagination import BetRentPagination
@@ -23,6 +24,10 @@ from .serializers import (
 
 class RegisterView(generics.CreateAPIView):
     """POST /api/v1/auth/register — Create a new account."""
+
+    @extend_schema(responses={201: RegisterSerializer})
+    def post(self, request, *args, **kwargs):
+        return super().post(request, *args, **kwargs)
 
     serializer_class = RegisterSerializer
     permission_classes = [AllowAny]
@@ -48,6 +53,7 @@ class LoginView(APIView):
 
     permission_classes = [AllowAny]
 
+    @extend_schema(request=LoginSerializer, responses={200: LoginSerializer})
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -59,6 +65,7 @@ class RefreshTokenView(APIView):
 
     permission_classes = [AllowAny]
 
+    @extend_schema(request=TokenRefreshSerializer, responses={200: TokenRefreshSerializer})
     def post(self, request):
         serializer = TokenRefreshSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

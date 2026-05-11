@@ -29,6 +29,9 @@ class LoginSerializer(serializers.Serializer):
 
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
+    access_token = serializers.CharField(read_only=True)
+    refresh_token = serializers.CharField(read_only=True)
+    token_type = serializers.CharField(read_only=True)
 
     def validate(self, attrs):
         user = authenticate(email=attrs["email"], password=attrs["password"])
@@ -48,6 +51,8 @@ class TokenRefreshSerializer(serializers.Serializer):
     """Exchange a refresh token for a new token pair."""
 
     refresh_token = serializers.CharField()
+    access_token = serializers.CharField(read_only=True)
+    token_type = serializers.CharField(read_only=True)
 
     def validate(self, attrs):
         try:

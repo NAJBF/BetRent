@@ -2,6 +2,7 @@ from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
+from drf_spectacular.utils import extend_schema
 
 from core.permissions import IsLandlord, IsOwnerOrAdmin
 from core.pagination import BetRentPagination
@@ -72,12 +73,20 @@ class MyListingsView(generics.ListAPIView):
 class ListingCreateView(generics.CreateAPIView):
     """POST /api/v1/listings/ — Landlord: create a listing."""
 
+    @extend_schema(responses={201: ListingDetailSerializer})
+    def post(self, request, *args, **kwargs):
+        return super().post(request, *args, **kwargs)
+
     serializer_class = ListingCreateSerializer
     permission_classes = [IsLandlord]
 
 
 class ListingUpdateView(generics.UpdateAPIView):
     """PUT /api/v1/listings/{id} — Owner: update listing fields."""
+
+    @extend_schema(responses={200: ListingDetailSerializer})
+    def put(self, request, *args, **kwargs):
+        return super().put(request, *args, **kwargs)
 
     serializer_class = ListingUpdateSerializer
     permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
