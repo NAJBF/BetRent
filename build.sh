@@ -1,5 +1,18 @@
-#/usr/bin/env bash
+#!/usr/bin/env bash
+# Exit on error
 set -o errexit
-pip install -r requirements.txt
-python manage.py migrate --no-input
-python manage.py collectstatic --no-input
+
+# Install dependencies using uv
+# We assume 'uv' is available in the environment or installed via a previous step
+# If Render doesn't have 'uv' pre-installed, you might need to install it:
+# curl -LsSf https://astral.sh/uv/install.sh | sh
+# source $HOME/.cargo/env
+
+uv sync --frozen
+uv cache prune --ci
+
+# Collect static files
+uv run python manage.py collectstatic --no-input
+
+# Run migrations
+uv run python manage.py migrate
