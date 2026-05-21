@@ -192,6 +192,9 @@ AUTHENTICATION_BACKENDS = [
 ]
 
 AXES_FAILURE_LIMIT = 5
+AXES_USERNAME_FORM_FIELD = "email"
+AXES_LOCKOUT_PARAMETERS = [["email", "ip_address"]]
+AXES_RESET_ON_SUCCESS = True
 
 PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.Argon2PasswordHasher",

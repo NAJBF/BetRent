@@ -16,3 +16,6 @@ uv run python manage.py collectstatic --no-input
 
 # Run migrations
 uv run python manage.py migrate
+
+# Reset axes lockout records (clear any accumulated failed login attempts)
+uv run python manage.py axes_reset
