@@ -77,14 +77,39 @@ class RefreshTokenView(APIView):
 # ---------------------------------------------------------------------------
 
 
-class UserProfileView(generics.RetrieveUpdateAPIView):
-    """GET/PUT /api/v1/users/me — View or update own profile."""
+class UserProfileView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    GET/PUT /api/v1/users/me — View or update own profile.
+    DELETE /api/v1/users/me — Soft-delete (deactivate) own account.
+    """
 
     serializer_class = UserProfileSerializer
     permission_classes = [IsAuthenticated]
 
     def get_object(self):
         return self.request.user
+
+    def perform_destroy(self, instance):
+        """
+        Soft-delete: deactivate the account instead of hard-deleting.
+        This preserves data integrity (bookings, reviews, payments)
+        while preventing the user from logging in again.
+        """
+        instance.is_active = False
+        instance.save(update_fields=["is_active"])
+
+        # Blacklist all outstanding refresh tokens for this user
+        try:
+            from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
+            from rest_framework_simplejwt.tokens import RefreshToken as RefreshTokenObj
+            tokens = OutstandingToken.objects.filter(user=instance)
+            for token in tokens:
+                try:
+                    RefreshTokenObj(token.token).blacklist()
+                except Exception:
+                    pass  # Token already blacklisted or expired
+        except ImportError:
+            pass  # Token blacklist app not installed; tokens will expire naturally
 
 
 class AdminUserListView(generics.ListAPIView):

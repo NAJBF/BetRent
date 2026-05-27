@@ -1,6 +1,7 @@
 from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema
 
@@ -12,7 +13,7 @@ from .serializers import (
     ListingDetailSerializer,
     ListingCreateSerializer,
     ListingUpdateSerializer,
-    ListingImageCreateSerializer,
+    ListingImageUploadSerializer,
 )
 from .filters import ListingFilter
 
@@ -30,7 +31,7 @@ class ListingListView(generics.ListAPIView):
         return (
             Listing.objects.filter(is_active=True)
             .select_related("category", "owner")
-            .prefetch_related("images", "reviews")
+            .prefetch_related("images", "reviews", "bookings")
         )
 
 
@@ -45,7 +46,7 @@ class ListingDetailView(generics.RetrieveAPIView):
         return (
             Listing.objects.filter(is_active=True)
             .select_related("category", "owner")
-            .prefetch_related("images", "reviews")
+            .prefetch_related("images", "reviews", "bookings")
         )
 
     def retrieve(self, request, *args, **kwargs):
@@ -66,7 +67,7 @@ class MyListingsView(generics.ListAPIView):
         return (
             Listing.objects.filter(owner=self.request.user)
             .select_related("category", "owner")
-            .prefetch_related("images", "reviews")
+            .prefetch_related("images", "reviews", "bookings")
         )
 
 
@@ -110,10 +111,16 @@ class ListingDeleteView(generics.DestroyAPIView):
 
 
 class ListingImageCreateView(generics.CreateAPIView):
-    """POST /api/v1/listings/{id}/images — Owner: add image to listing."""
+    """
+    POST /api/v1/listings/{id}/images — Owner: add image to listing.
 
-    serializer_class = ListingImageCreateSerializer
+    Accepts multipart/form-data with an 'image' file field (for Expo / mobile)
+    OR a JSON body with 'image_url' string (backward compatible).
+    """
+
+    serializer_class = ListingImageUploadSerializer
     permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def perform_create(self, serializer):
         listing = Listing.objects.get(pk=self.kwargs["listing_id"])

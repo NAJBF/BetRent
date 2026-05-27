@@ -79,12 +79,17 @@ class Listing(BaseModel):
 
 
 class ListingImage(BaseModel):
-    """Image URL attached to a listing, with primary flag and sort order."""
+    """Image attached to a listing, with primary flag and sort order."""
 
     listing = models.ForeignKey(
         Listing, on_delete=models.CASCADE, related_name="images"
     )
-    image_url = models.URLField(max_length=500)
+    # File upload (preferred — used by Expo / mobile clients)
+    image = models.ImageField(
+        upload_to="listings/%Y/%m/", null=True, blank=True
+    )
+    # Legacy URL string (backward compatibility)
+    image_url = models.URLField(max_length=500, blank=True, default="")
     is_primary = models.BooleanField(default=False)
     sort_order = models.PositiveIntegerField(default=0)
 
