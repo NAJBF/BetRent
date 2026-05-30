@@ -1,21 +1,36 @@
+from datetime import timedelta
+
 from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from rest_framework.views import APIView
+from rest_framework.exceptions import NotFound, PermissionDenied
+from django.conf import settings
+from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema
 
 from core.permissions import IsLandlord, IsOwnerOrAdmin
 from core.pagination import BetRentPagination
-from .models import Listing, ListingImage
+from .models import Listing, ListingImage, PromotionPayment
 from .serializers import (
     ListingListSerializer,
     ListingDetailSerializer,
     ListingCreateSerializer,
     ListingUpdateSerializer,
     ListingImageUploadSerializer,
+    PromotionRequestSerializer,
+    PromotionPaymentSerializer,
 )
 from .filters import ListingFilter
+from payments.services import ChapaService
+
+
+# ---------------------------------------------------------------------------
+# Promotion pricing table (fallback if not in settings)
+# ---------------------------------------------------------------------------
+PROMOTION_PRICING = getattr(settings, "PROMOTION_PRICING", {7: 200, 14: 350, 30: 600})
 
 
 class ListingListView(generics.ListAPIView):
@@ -32,6 +47,7 @@ class ListingListView(generics.ListAPIView):
             Listing.objects.filter(is_active=True)
             .select_related("category", "owner")
             .prefetch_related("images", "reviews", "bookings")
+            .order_by("-is_featured", "-created_at")
         )
 
 
@@ -129,3 +145,157 @@ class ListingImageCreateView(generics.CreateAPIView):
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("You can only add images to your own listings.")
         serializer.save(listing=listing)
+
+
+# ---------------------------------------------------------------------------
+# Featured Listing Promotion Views
+# ---------------------------------------------------------------------------
+
+
+class ListingPromoteView(APIView):
+    """
+    POST /api/v1/listings/{listing_id}/promote/
+    Landlord: initiate a Chapa payment to promote a listing as featured.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        request=PromotionRequestSerializer,
+        responses={201: PromotionPaymentSerializer},
+    )
+    def post(self, request, listing_id):
+        # Fetch listing
+        try:
+            listing = Listing.objects.get(pk=listing_id)
+        except Listing.DoesNotExist:
+            raise NotFound("Listing not found.")
+
+        # Only the owner (landlord) can promote
+        if listing.owner != request.user and request.user.role != "admin":
+            raise PermissionDenied("Only the listing owner can promote this listing.")
+
+        # Cannot promote inactive listings
+        if not listing.is_active:
+            return Response(
+                {"detail": "Cannot promote an inactive or deleted listing."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate duration
+        serializer = PromotionRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        duration_days = int(serializer.validated_data["duration_days"])
+
+        # Lookup price
+        amount = PROMOTION_PRICING.get(duration_days)
+        if amount is None:
+            return Response(
+                {"detail": f"Invalid promotion duration: {duration_days} days."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Create promotion payment record
+        promo_payment = PromotionPayment.objects.create(
+            listing=listing,
+            payer=request.user,
+            duration_days=duration_days,
+            amount=amount,
+        )
+
+        # Initiate Chapa payment
+        chapa_result = ChapaService.initiate_payment(
+            amount=float(amount),
+            tx_ref=promo_payment.transaction_ref,
+            email=request.user.email,
+            first_name=request.user.full_name.split()[0] if request.user.full_name else "User",
+        )
+        promo_payment.checkout_url = chapa_result.get("checkout_url", "")
+        promo_payment.save(update_fields=["checkout_url"])
+
+        return Response(
+            PromotionPaymentSerializer(promo_payment).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class PromotionVerifyView(APIView):
+    """
+    GET /api/v1/listings/promotions/verify/{tx_ref}/
+    Verify a promotion payment and activate the featured listing.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: PromotionPaymentSerializer})
+    def get(self, request, tx_ref):
+        try:
+            promo_payment = PromotionPayment.objects.select_related("listing").get(
+                transaction_ref=tx_ref
+            )
+        except PromotionPayment.DoesNotExist:
+            raise NotFound("Promotion payment not found.")
+
+        # Verify with Chapa if still pending
+        if promo_payment.status == "pending":
+            result = ChapaService.verify_payment(tx_ref)
+            if result["status"] == "success":
+                promo_payment.status = "completed"
+                promo_payment.save(update_fields=["status"])
+
+                # Activate featured listing
+                listing = promo_payment.listing
+                listing.is_featured = True
+                listing.featured_until = (
+                    timezone.now() + timedelta(days=promo_payment.duration_days)
+                )
+                listing.save(update_fields=["is_featured", "featured_until"])
+            else:
+                promo_payment.status = "failed"
+                promo_payment.save(update_fields=["status"])
+
+        return Response(PromotionPaymentSerializer(promo_payment).data)
+
+
+class PromotionWebhookView(APIView):
+    """
+    POST /api/v1/listings/promotions/webhook/chapa/
+    Chapa webhook callback for promotion payments. No auth required.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        tx_ref = request.data.get("tx_ref")
+        webhook_status = request.data.get("status")
+
+        if not tx_ref or not webhook_status:
+            return Response(
+                {"detail": "tx_ref and status are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            promo_payment = PromotionPayment.objects.select_related("listing").get(
+                transaction_ref=tx_ref
+            )
+        except PromotionPayment.DoesNotExist:
+            raise NotFound("Promotion payment not found.")
+
+        if webhook_status == "success" and promo_payment.status == "pending":
+            promo_payment.status = "completed"
+            promo_payment.save(update_fields=["status"])
+
+            # Activate featured listing
+            listing = promo_payment.listing
+            listing.is_featured = True
+            listing.featured_until = (
+                timezone.now() + timedelta(days=promo_payment.duration_days)
+            )
+            listing.save(update_fields=["is_featured", "featured_until"])
+        elif webhook_status != "success":
+            promo_payment.status = "failed"
+            promo_payment.save(update_fields=["status"])
+
+        return Response({"status": "received"}, status=status.HTTP_200_OK)
+

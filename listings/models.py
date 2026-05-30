@@ -1,3 +1,5 @@
+import uuid
+
 from django.db import models
 from django.conf import settings
 from core.models import BaseModel
@@ -41,6 +43,10 @@ class Listing(BaseModel):
     views_count = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
 
+    # Featured / Premium placement
+    is_featured = models.BooleanField(default=False)
+    featured_until = models.DateTimeField(null=True, blank=True)
+
     # Relationships
     category = models.ForeignKey(
         "categories.Category",
@@ -55,11 +61,12 @@ class Listing(BaseModel):
     )
 
     class Meta:
-        ordering = ["-created_at"]
+        ordering = ["-is_featured", "-created_at"]
         indexes = [
             models.Index(fields=["city"]),
             models.Index(fields=["price_per_day"]),
             models.Index(fields=["is_active"]),
+            models.Index(fields=["-is_featured", "-created_at"]),
         ]
 
     def __str__(self):
@@ -105,4 +112,46 @@ class ListingImage(BaseModel):
             ListingImage.objects.filter(
                 listing=self.listing, is_primary=True
             ).exclude(pk=self.pk).update(is_primary=False)
+        super().save(*args, **kwargs)
+
+
+class PromotionPayment(BaseModel):
+    """
+    Tracks Chapa payments for listing promotions (featured placement).
+    Kept separate from the booking Payment model to avoid breaking
+    the existing booking payment flow.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    listing = models.ForeignKey(
+        Listing,
+        on_delete=models.CASCADE,
+        related_name="promotion_payments",
+    )
+    payer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="promotion_payments",
+    )
+    duration_days = models.PositiveIntegerField()
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    transaction_ref = models.CharField(max_length=100, unique=True, blank=True)
+    checkout_url = models.URLField(blank=True, default="")
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.PENDING
+    )
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Promotion {self.transaction_ref} — {self.listing.title} ({self.duration_days}d)"
+
+    def save(self, *args, **kwargs):
+        if not self.transaction_ref:
+            self.transaction_ref = f"PROMO-{uuid.uuid4().hex[:12].upper()}"
         super().save(*args, **kwargs)

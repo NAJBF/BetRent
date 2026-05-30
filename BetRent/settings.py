@@ -325,7 +325,24 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
 
+CELERY_BEAT_SCHEDULE = {
+    "expire-featured-listings": {
+        "task": "listings.tasks.expire_featured_listings",
+        "schedule": 3600.0,  # every hour
+    },
+}
+
 # ---------------------------------------------------------------------------
 # Chapa Payment Gateway
 # ---------------------------------------------------------------------------
 CHAPA_SECRET_KEY = os.environ.get("CHAPA_SECRET_KEY", "")
+
+# ---------------------------------------------------------------------------
+# Featured Listing Promotion Pricing (ETB)
+# ---------------------------------------------------------------------------
+PROMOTION_PRICING = {
+    7: 200,    # 7 days  -> 200 ETB
+    14: 350,   # 14 days -> 350 ETB
+    30: 600,   # 30 days -> 600 ETB
+}
+

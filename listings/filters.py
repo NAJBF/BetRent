@@ -15,10 +15,11 @@ class ListingFilter(django_filters.FilterSet):
     max_price = django_filters.NumberFilter(field_name="price_per_day", lookup_expr="lte")
     condition = django_filters.ChoiceFilter(choices=Listing.Condition.choices)
     category_slug = django_filters.CharFilter(field_name="category__slug", lookup_expr="iexact")
+    is_featured = django_filters.BooleanFilter(field_name="is_featured")
 
     class Meta:
         model = Listing
-        fields = ["q", "city", "min_price", "max_price", "condition", "category_slug"]
+        fields = ["q", "city", "min_price", "max_price", "condition", "category_slug", "is_featured"]
 
     def search_filter(self, queryset, name, value):
         """Full-text search across title and description."""

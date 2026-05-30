@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.db.models import Avg, Count
-from .models import Listing, ListingImage
+from .models import Listing, ListingImage, PromotionPayment
 from accounts.serializers import UserSummarySerializer
 from categories.serializers import CategoryChildSerializer
 
@@ -67,7 +67,8 @@ class ListingListSerializer(serializers.ModelSerializer):
             "id", "title", "slug", "price_per_day", "price_per_week",
             "price_per_month", "deposit_amount", "condition", "city",
             "views_count", "primary_image", "category_name", "owner_name",
-            "average_rating", "total_reviews", "is_available", "created_at",
+            "average_rating", "total_reviews", "is_available",
+            "is_featured", "featured_until", "created_at",
         ]
 
     def get_primary_image(self, obj):
@@ -114,7 +115,8 @@ class ListingDetailSerializer(serializers.ModelSerializer):
             "id", "title", "slug", "description", "price_per_day",
             "price_per_week", "price_per_month", "deposit_amount",
             "condition", "city", "address", "views_count", "is_active",
-            "is_available", "category", "owner", "images",
+            "is_available", "is_featured", "featured_until",
+            "category", "owner", "images",
             "average_rating", "total_reviews",
             "created_at", "updated_at",
         ]
@@ -170,3 +172,28 @@ class ListingUpdateSerializer(serializers.ModelSerializer):
             "title", "description", "price_per_day", "price_per_week",
             "price_per_month", "deposit_amount", "condition", "city", "address",
         ]
+
+
+class PromotionRequestSerializer(serializers.Serializer):
+    """Request body for listing promotion."""
+
+    duration_days = serializers.ChoiceField(
+        choices=[7, 14, 30],
+        help_text="Promotion duration: 7, 14, or 30 days.",
+    )
+
+
+class PromotionPaymentSerializer(serializers.ModelSerializer):
+    """Response serializer for promotion payment records."""
+
+    listing_id = serializers.UUIDField(source="listing.id", read_only=True)
+    listing_title = serializers.CharField(source="listing.title", read_only=True)
+
+    class Meta:
+        model = PromotionPayment
+        fields = [
+            "id", "listing_id", "listing_title", "duration_days",
+            "amount", "transaction_ref", "checkout_url", "status",
+            "created_at",
+        ]
+

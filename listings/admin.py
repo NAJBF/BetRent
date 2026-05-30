@@ -1,7 +1,7 @@
 from django.contrib import admin
 from unfold.admin import ModelAdmin, TabularInline
 from unfold.decorators import display
-from .models import Listing, ListingImage
+from .models import Listing, ListingImage, PromotionPayment
 
 
 class ListingImageInline(TabularInline):
@@ -19,14 +19,15 @@ class ListingAdmin(ModelAdmin):
         "display_price",
         "display_condition",
         "display_status",
+        "display_featured",
         "views_count",
     ]
-    list_filter = ["is_active", "condition", "city", "category"]
+    list_filter = ["is_active", "is_featured", "condition", "city", "category"]
     search_fields = ["title", "description", "city", "owner__email"]
     autocomplete_fields = ["owner", "category"]
     readonly_fields = ["views_count", "slug", "created_at", "updated_at"]
     inlines = [ListingImageInline]
-    ordering = ["-created_at"]
+    ordering = ["-is_featured", "-created_at"]
 
     @display(description="Listing", header=True)
     def display_header(self, instance):
@@ -58,6 +59,10 @@ class ListingAdmin(ModelAdmin):
     def display_status(self, instance):
         return instance.is_active
 
+    @display(description="Featured", boolean=True)
+    def display_featured(self, instance):
+        return instance.is_featured
+
     fieldsets = (
         (None, {"fields": ("title", "slug", "owner", "category")}),
         ("Pricing & Deposit", {
@@ -67,6 +72,10 @@ class ListingAdmin(ModelAdmin):
         ("Details & Location", {
             "classes": ["tab"],
             "fields": ("description", "condition", "city", "address")
+        }),
+        ("Featured Promotion", {
+            "classes": ["tab"],
+            "fields": ("is_featured", "featured_until")
         }),
         ("System Metrics", {
             "classes": ["tab"],
@@ -84,3 +93,52 @@ class ListingImageAdmin(ModelAdmin):
     @display(description="Preview")
     def display_preview(self, instance):
         return [instance.image_url]
+
+
+@admin.register(PromotionPayment)
+class PromotionPaymentAdmin(ModelAdmin):
+    list_display = [
+        "transaction_ref",
+        "listing",
+        "payer",
+        "duration_days",
+        "amount",
+        "status",
+        "created_at",
+    ]
+    list_editable = ["status"]
+    list_filter = ["status", "duration_days"]
+    search_fields = ["transaction_ref", "listing__title", "payer__email"]
+    readonly_fields = ["transaction_ref", "created_at", "updated_at"]
+    ordering = ["-created_at"]
+
+    def save_model(self, request, obj, form, change):
+        # If the status is manually changed to COMPLETED in the admin detail view
+        if change and "status" in form.changed_data:
+            if obj.status == PromotionPayment.Status.COMPLETED:
+                from django.utils import timezone
+                from datetime import timedelta
+                
+                # Activate featured listing
+                obj.listing.is_featured = True
+                obj.listing.featured_until = timezone.now() + timedelta(days=obj.duration_days)
+                obj.listing.save(update_fields=["is_featured", "featured_until"])
+                
+        super().save_model(request, obj, form, change)
+
+    def save_formset(self, request, form, formset, change):
+        # Handle list_editable saves
+        instances = formset.save(commit=False)
+        for instance in instances:
+            # Check if status was changed in the list view
+            if instance.pk:
+                orig = PromotionPayment.objects.get(pk=instance.pk)
+                if orig.status != PromotionPayment.Status.COMPLETED and instance.status == PromotionPayment.Status.COMPLETED:
+                    from django.utils import timezone
+                    from datetime import timedelta
+                    instance.listing.is_featured = True
+                    instance.listing.featured_until = timezone.now() + timedelta(days=instance.duration_days)
+                    instance.listing.save(update_fields=["is_featured", "featured_until"])
+            instance.save()
+        formset.save_m2m()
+
