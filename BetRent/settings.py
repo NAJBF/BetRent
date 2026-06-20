@@ -197,6 +197,19 @@ SPECTACULAR_SETTINGS = {
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
     "COMPONENT_SPLIT_REQUEST": True,
+    "APPEND_COMPONENTS": {
+        "securitySchemes": {
+            "PaymentAppToken": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "X-App-Token",
+                "description": (
+                    "Static token for POST /payments/external/record/. "
+                    "Must match server PAYMENT_APP_TOKEN."
+                ),
+            },
+        },
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -319,6 +332,11 @@ UNFOLD = {
                         "link": "/admin/payments/payment/",
                     },
                     {
+                        "title": "External Payments",
+                        "icon": "receipt_long",
+                        "link": "/admin/payments/externalpaymentrecord/",
+                    },
+                    {
                         "title": "Income Dashboard",
                         "icon": "analytics",
                         "link": "/admin/payments/payment/income-dashboard/",
@@ -378,7 +396,7 @@ CELERY_BEAT_SCHEDULE = {
 CHAPA_SECRET_KEY = os.environ.get("CHAPA_SECRET_KEY", "")
 
 # Static token for external payment record endpoint (X-App-Token header)
-PAYMENT_APP_TOKEN = os.environ.get("PAYMENT_APP_TOKEN", "")
+PAYMENT_APP_TOKEN = os.environ.get("PAYMENT_APP_TOKEN", "").strip().strip('"').strip("'")
 
 # ---------------------------------------------------------------------------
 # Email Configuration (OTP verification — set credentials in .env)

@@ -3,9 +3,9 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.exceptions import NotFound, PermissionDenied
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiResponse
 
-from core.permissions import HasPaymentAppToken
+from core.authentication import PaymentAppTokenAuthentication
 from payments.models import ExternalPaymentRecord, Payment
 from payments.subscription_payment import apply_subscription_payment
 from .serializers import (
@@ -38,13 +38,33 @@ class PaymentInitiateView(APIView):
 class ExternalPaymentRecordView(APIView):
     """
     POST /api/v1/payments/external/record/
-    Public endpoint protected by static app token (X-App-Token header).
     External payment system submits transaction details here.
+    Auth: X-App-Token header (same value as PAYMENT_APP_TOKEN on server).
     """
 
-    permission_classes = [HasPaymentAppToken]
+    authentication_classes = [PaymentAppTokenAuthentication]
+    permission_classes = [AllowAny]
 
-    @extend_schema(request=ExternalPaymentRecordSerializer, responses={201: ExternalPaymentRecordSerializer})
+    @extend_schema(
+        auth=["PaymentAppToken"],
+        request=ExternalPaymentRecordSerializer,
+        responses={
+            201: ExternalPaymentRecordSerializer,
+            401: OpenApiResponse(description="Missing or invalid X-App-Token"),
+        },
+        examples=[
+            OpenApiExample(
+                "Record completed landlord payment",
+                value={
+                    "transaction_id": "LSUB-ABC123DEF456",
+                    "payer_name": "John Landlord",
+                    "payment_status": "completed",
+                    "amount": "500.00",
+                },
+                request_only=True,
+            ),
+        ],
+    )
     def post(self, request):
         serializer = ExternalPaymentRecordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -63,7 +83,16 @@ class ExternalPaymentVerifyView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(request=VerifyTransactionRequestSerializer)
+    @extend_schema(
+        request=VerifyTransactionRequestSerializer,
+        examples=[
+            OpenApiExample(
+                "Verify subscription payment",
+                value={"transaction_id": "LSUB-ABC123DEF456"},
+                request_only=True,
+            ),
+        ],
+    )
     def post(self, request):
         serializer = VerifyTransactionRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

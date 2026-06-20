@@ -2,6 +2,8 @@
 Apply external / verified payments to subscription records.
 """
 
+from decimal import Decimal
+
 from payments.models import ExternalPaymentRecord
 from subscriptions.models import CustomerPremiumSubscription, LandlordSubscription
 from subscriptions.services import activate_customer_premium, activate_landlord_subscription
@@ -33,6 +35,13 @@ def apply_subscription_payment(transaction_id):
     ).select_related("plan", "user").first()
 
     if landlord_sub:
+        # Security: amount must match the subscription price exactly
+        if Decimal(record.amount) != Decimal(landlord_sub.amount):
+            return (
+                False,
+                "Payment amount does not match the selected plan. Please contact support.",
+                "landlord",
+            )
         if landlord_sub.payment_status == LandlordSubscription.PaymentStatus.COMPLETED:
             record.processed = True
             record.save(update_fields=["processed"])
@@ -47,6 +56,13 @@ def apply_subscription_payment(transaction_id):
     ).select_related("user").first()
 
     if customer_sub:
+        # Security: amount must match the premium price stored on the subscription
+        if Decimal(record.amount) != Decimal(customer_sub.amount):
+            return (
+                False,
+                "Payment amount does not match the premium subscription price. Please contact support.",
+                "customer_premium",
+            )
         if customer_sub.payment_status == CustomerPremiumSubscription.PaymentStatus.COMPLETED:
             record.processed = True
             record.save(update_fields=["processed"])
@@ -59,6 +75,12 @@ def apply_subscription_payment(transaction_id):
     # External record exists as completed but no subscription matched — try direct subscription lookup
     landlord_sub = LandlordSubscription.objects.filter(transaction_ref=transaction_id).first()
     if landlord_sub and record.payment_status == ExternalPaymentRecord.Status.COMPLETED:
+        if Decimal(record.amount) != Decimal(landlord_sub.amount):
+            return (
+                False,
+                "Payment amount does not match the selected plan. Please contact support.",
+                "landlord",
+            )
         activate_landlord_subscription(landlord_sub)
         record.processed = True
         record.save(update_fields=["processed"])
@@ -66,6 +88,12 @@ def apply_subscription_payment(transaction_id):
 
     customer_sub = CustomerPremiumSubscription.objects.filter(transaction_ref=transaction_id).first()
     if customer_sub and record.payment_status == ExternalPaymentRecord.Status.COMPLETED:
+        if Decimal(record.amount) != Decimal(customer_sub.amount):
+            return (
+                False,
+                "Payment amount does not match the premium subscription price. Please contact support.",
+                "customer_premium",
+            )
         activate_customer_premium(customer_sub)
         record.processed = True
         record.save(update_fields=["processed"])
