@@ -1,0 +1,52 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 2rem;">
+  <div style="background: #1e1e2e; padding: 1.5rem; border-radius: 8px; border: 1px solid #333;">
+    <h3 style="margin: 0 0 0.5rem; color: #a78bfa;">Total Income</h3>
+    <p style="font-size: 1.8rem; font-weight: bold; margin: 0;">{{ total_income|floatformat:2 }} ETB</p>
+  </div>
+  <div style="background: #1e1e2e; padding: 1.5rem; border-radius: 8px; border: 1px solid #333;">
+    <h3 style="margin: 0 0 0.5rem; color: #86efac;">Booking Payments</h3>
+    <p style="font-size: 1.4rem; font-weight: bold; margin: 0;">{{ booking_income|floatformat:2 }} ETB</p>
+  </div>
+  <div style="background: #1e1e2e; padding: 1.5rem; border-radius: 8px; border: 1px solid #333;">
+    <h3 style="margin: 0 0 0.5rem; color: #93c5fd;">Listing Promotions</h3>
+    <p style="font-size: 1.4rem; font-weight: bold; margin: 0;">{{ promotion_income|floatformat:2 }} ETB</p>
+  </div>
+  <div style="background: #1e1e2e; padding: 1.5rem; border-radius: 8px; border: 1px solid #333;">
+    <h3 style="margin: 0 0 0.5rem; color: #fcd34d;">Landlord Subscriptions</h3>
+    <p style="font-size: 1.4rem; font-weight: bold; margin: 0;">{{ landlord_sub_income|floatformat:2 }} ETB</p>
+  </div>
+  <div style="background: #1e1e2e; padding: 1.5rem; border-radius: 8px; border: 1px solid #333;">
+    <h3 style="margin: 0 0 0.5rem; color: #f9a8d4;">Customer Premium</h3>
+    <p style="font-size: 1.4rem; font-weight: bold; margin: 0;">{{ customer_premium_income|floatformat:2 }} ETB</p>
+  </div>
+</div>
+
+<h2>Recent Completed Payments</h2>
+<table style="width: 100%; border-collapse: collapse;">
+  <thead>
+    <tr style="border-bottom: 1px solid #444;">
+      <th style="text-align: left; padding: 0.5rem;">Type</th>
+      <th style="text-align: left; padding: 0.5rem;">Reference</th>
+      <th style="text-align: left; padding: 0.5rem;">User</th>
+      <th style="text-align: right; padding: 0.5rem;">Amount (ETB)</th>
+      <th style="text-align: left; padding: 0.5rem;">Date</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in recent_payments %}
+    <tr style="border-bottom: 1px solid #333;">
+      <td style="padding: 0.5rem;">{{ p.type }}</td>
+      <td style="padding: 0.5rem;">{{ p.ref }}</td>
+      <td style="padding: 0.5rem;">{{ p.user }}</td>
+      <td style="padding: 0.5rem; text-align: right;">{{ p.amount|floatformat:2 }}</td>
+      <td style="padding: 0.5rem;">{{ p.date }}</td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="5" style="padding: 1rem;">No completed payments yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

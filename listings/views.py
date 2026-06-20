@@ -7,6 +7,7 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.views import APIView
 from rest_framework.exceptions import NotFound, PermissionDenied
 from django.conf import settings
+from django.db import models
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema
@@ -33,6 +34,25 @@ from payments.services import ChapaService
 PROMOTION_PRICING = getattr(settings, "PROMOTION_PRICING", {7: 200, 14: 350, 30: 600})
 
 
+def _user_can_view_premium(user):
+    """Check if user can view premium listings."""
+    if not user or not user.is_authenticated:
+        return False
+    return user.can_view_premium_listings
+
+
+def _filter_premium_listings(queryset, user):
+    """Hide premium posts from non-premium users (owner/admin always see their own)."""
+    if _user_can_view_premium(user):
+        return queryset
+    if user and user.is_authenticated and user.is_landlord:
+        # Landlords see all listings except premium ones they don't own
+        return queryset.filter(
+            models.Q(is_premium_post=False) | models.Q(owner=user)
+        )
+    return queryset.filter(is_premium_post=False)
+
+
 class ListingListView(generics.ListAPIView):
     """GET /api/v1/listings/ — Public: search, filter, paginate listings."""
 
@@ -43,12 +63,13 @@ class ListingListView(generics.ListAPIView):
     filterset_class = ListingFilter
 
     def get_queryset(self):
-        return (
+        qs = (
             Listing.objects.filter(is_active=True)
             .select_related("category", "owner")
             .prefetch_related("images", "reviews", "bookings")
             .order_by("-is_featured", "-created_at")
         )
+        return _filter_premium_listings(qs, self.request.user)
 
 
 class ListingDetailView(generics.RetrieveAPIView):
@@ -67,6 +88,21 @@ class ListingDetailView(generics.RetrieveAPIView):
 
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()
+
+        # Block premium listing access for non-premium customers
+        if instance.is_premium_post:
+            user = request.user
+            is_owner = user.is_authenticated and instance.owner == user
+            is_admin = user.is_authenticated and user.role == "admin"
+            if not is_owner and not is_admin and not _user_can_view_premium(user):
+                return Response(
+                    {
+                        "detail": "This is a premium listing. Upgrade to a premium customer subscription to view.",
+                        "requires_premium": True,
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
         instance.increment_views()
         serializer = self.get_serializer(instance)
         return Response(serializer.data)
@@ -88,10 +124,18 @@ class MyListingsView(generics.ListAPIView):
 
 
 class ListingCreateView(generics.CreateAPIView):
-    """POST /api/v1/listings/ — Landlord: create a listing."""
+    """POST /api/v1/listings/create/ — Landlord: create a listing."""
 
     @extend_schema(responses={201: ListingDetailSerializer})
     def post(self, request, *args, **kwargs):
+        if not request.user.can_post_listings:
+            return Response(
+                {
+                    "detail": "Posting is not allowed. Verify email and complete payment first.",
+                    "account_status": request.user.account_status,
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
         return super().post(request, *args, **kwargs)
 
     serializer_class = ListingCreateSerializer

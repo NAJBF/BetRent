@@ -68,7 +68,7 @@ class ListingListSerializer(serializers.ModelSerializer):
             "price_per_month", "deposit_amount", "condition", "city",
             "views_count", "primary_image", "category_name", "owner_name",
             "average_rating", "total_reviews", "is_available",
-            "is_featured", "featured_until", "created_at",
+            "is_featured", "featured_until", "is_premium_post", "created_at",
         ]
 
     def get_primary_image(self, obj):
@@ -115,7 +115,7 @@ class ListingDetailSerializer(serializers.ModelSerializer):
             "id", "title", "slug", "description", "price_per_day",
             "price_per_week", "price_per_month", "deposit_amount",
             "condition", "city", "address", "views_count", "is_active",
-            "is_available", "is_featured", "featured_until",
+            "is_available", "is_featured", "featured_until", "is_premium_post",
             "category", "owner", "images",
             "average_rating", "total_reviews",
             "created_at", "updated_at",
@@ -136,16 +136,17 @@ class ListingDetailSerializer(serializers.ModelSerializer):
 
 
 class ListingCreateSerializer(serializers.ModelSerializer):
-    """Create a new listing (landlord only)."""
+    """Create a new listing (landlord only). Supports normal or premium post type."""
 
     category_id = serializers.UUIDField(write_only=True)
+    is_premium_post = serializers.BooleanField(default=False, required=False)
 
     class Meta:
         model = Listing
         fields = [
             "id", "title", "description", "price_per_day", "price_per_week",
             "price_per_month", "deposit_amount", "condition", "city",
-            "address", "category_id", "slug",
+            "address", "category_id", "is_premium_post", "slug",
         ]
         read_only_fields = ["id", "slug"]
 
@@ -155,23 +156,90 @@ class ListingCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Category not found.")
         return value
 
+    def validate(self, attrs):
+        user = self.context["request"].user
+        is_premium_post = attrs.get("is_premium_post", False)
+
+        from subscriptions.services import (
+            check_landlord_can_post,
+            validate_premium_post_price,
+        )
+
+        allowed, error = check_landlord_can_post(user, is_premium_post=is_premium_post)
+        if not allowed:
+            raise serializers.ValidationError(error)
+
+        if is_premium_post:
+            listing = Listing(**{k: v for k, v in attrs.items() if k != "category_id"})
+            valid, price_error = validate_premium_post_price(listing)
+            if not valid:
+                raise serializers.ValidationError({"is_premium_post": price_error})
+
+        return attrs
+
     def create(self, validated_data):
         from categories.models import Category
+        from subscriptions.services import increment_landlord_usage
+
         category_id = validated_data.pop("category_id")
+        is_premium_post = validated_data.pop("is_premium_post", False)
         validated_data["category"] = Category.objects.get(id=category_id)
         validated_data["owner"] = self.context["request"].user
-        return super().create(validated_data)
+        validated_data["is_premium_post"] = is_premium_post
+        listing = super().create(validated_data)
+        increment_landlord_usage(self.context["request"].user, is_premium_post=is_premium_post)
+        return listing
 
 
 class ListingUpdateSerializer(serializers.ModelSerializer):
     """Update listing fields (owner only)."""
+
+    is_premium_post = serializers.BooleanField(required=False)
 
     class Meta:
         model = Listing
         fields = [
             "title", "description", "price_per_day", "price_per_week",
             "price_per_month", "deposit_amount", "condition", "city", "address",
+            "is_premium_post",
         ]
+
+    def validate(self, attrs):
+        is_premium_post = attrs.get("is_premium_post")
+        if is_premium_post is None:
+            return attrs
+
+        instance = self.instance
+        user = self.context["request"].user
+
+        if is_premium_post and not instance.is_premium_post:
+            from subscriptions.services import check_landlord_can_post, validate_premium_post_price
+            allowed, error = check_landlord_can_post(user, is_premium_post=True)
+            if not allowed:
+                raise serializers.ValidationError(error)
+
+        if is_premium_post:
+            from subscriptions.services import validate_premium_post_price
+            temp = Listing(
+                price_per_day=attrs.get("price_per_day", instance.price_per_day),
+                price_per_month=attrs.get("price_per_month", instance.price_per_month),
+            )
+            valid, price_error = validate_premium_post_price(temp)
+            if not valid:
+                raise serializers.ValidationError({"is_premium_post": price_error})
+
+        return attrs
+
+    def update(self, instance, validated_data):
+        was_premium = instance.is_premium_post
+        is_premium_post = validated_data.get("is_premium_post", was_premium)
+        listing = super().update(instance, validated_data)
+
+        if is_premium_post and not was_premium:
+            from subscriptions.services import increment_landlord_usage
+            increment_landlord_usage(self.context["request"].user, is_premium_post=True)
+
+        return listing
 
 
 class PromotionRequestSerializer(serializers.Serializer):

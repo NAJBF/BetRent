@@ -43,6 +43,21 @@ class User(AbstractUser):
         default=Role.CUSTOMER,
     )
 
+    class AccountStatus(models.TextChoices):
+        PENDING_EMAIL = "pending_email", "Pending Email Verification"
+        PENDING_PAYMENT = "pending_payment", "Pending Payment Verification"
+        ACTIVE = "active", "Active"
+        INACTIVE = "inactive", "Inactive"
+
+    email_verified = models.BooleanField(default=False)
+    account_status = models.CharField(
+        max_length=30,
+        choices=AccountStatus.choices,
+        default=AccountStatus.PENDING_EMAIL,
+    )
+    is_premium_customer = models.BooleanField(default=False)
+    premium_until = models.DateTimeField(null=True, blank=True)
+
     objects = UserManager()
 
     USERNAME_FIELD = "email"
@@ -62,3 +77,24 @@ class User(AbstractUser):
     @property
     def is_landlord(self):
         return self.role in (self.Role.LANDLORD, self.Role.ADMIN)
+
+    @property
+    def can_post_listings(self):
+        """Landlords can post only when email verified and account is active."""
+        if not self.is_landlord:
+            return False
+        if not self.email_verified:
+            return False
+        return self.account_status == self.AccountStatus.ACTIVE
+
+    @property
+    def can_view_premium_listings(self):
+        """Premium customers (or admins) can view premium listings."""
+        if self.role == self.Role.ADMIN:
+            return True
+        if not self.is_premium_customer:
+            return False
+        if self.premium_until:
+            from django.utils import timezone
+            return self.premium_until > timezone.now()
+        return True

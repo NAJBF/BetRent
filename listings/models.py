@@ -43,9 +43,12 @@ class Listing(BaseModel):
     views_count = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
 
-    # Featured / Premium placement
+    # Featured promotion (paid boost)
     is_featured = models.BooleanField(default=False)
     featured_until = models.DateTimeField(null=True, blank=True)
+
+    # Premium luxury listing (visible only to premium customers)
+    is_premium_post = models.BooleanField(default=False)
 
     # Relationships
     category = models.ForeignKey(

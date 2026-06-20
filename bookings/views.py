@@ -126,4 +126,11 @@ class BookingStatusUpdateView(APIView):
             booking.cancellation_reason = serializer.validated_data["cancellation_reason"]
         booking.save(update_fields=["status", "cancellation_reason", "updated_at"])
 
-        return Response(BookingDetailSerializer(booking).data, status=status.HTTP_200_OK)
+        if booking.status == "approved":
+            from subscriptions.services import increment_approval_usage
+            increment_approval_usage(booking.listing.owner)
+
+        return Response(
+            BookingDetailSerializer(booking, context={"request": request}).data,
+            status=status.HTTP_200_OK,
+        )

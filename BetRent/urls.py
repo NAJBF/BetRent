@@ -21,6 +21,8 @@ urlpatterns = [
     path("api/v1/reviews/", include("reviews.urls")),
     # --- Payments ---
     path("api/v1/payments/", include("payments.urls")),
+    # --- Subscriptions ---
+    path("api/v1/subscriptions/", include("subscriptions.urls")),
     # --- API Schema & Docs ---
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),

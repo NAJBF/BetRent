@@ -1,7 +1,10 @@
 from rest_framework import serializers
 from .models import Booking
 from listings.models import Listing
-from accounts.serializers import UserSummarySerializer
+from accounts.serializers import RenterContactSerializer, UserSummarySerializer
+
+
+APPROVED_STATUSES = ("approved", "paid", "active", "completed")
 
 
 class BookingCreateSerializer(serializers.ModelSerializer):
@@ -28,6 +31,12 @@ class BookingCreateSerializer(serializers.ModelSerializer):
             listing = Listing.objects.get(id=value, is_active=True)
         except Listing.DoesNotExist:
             raise serializers.ValidationError("Listing not found or inactive.")
+
+        user = self.context["request"].user
+        if listing.is_premium_post and not user.can_view_premium_listings:
+            raise serializers.ValidationError(
+                "Premium listings require a premium customer subscription to book."
+            )
         return value
 
     def validate(self, attrs):
@@ -43,13 +52,11 @@ class BookingCreateSerializer(serializers.ModelSerializer):
 
         listing = Listing.objects.get(id=listing_id)
 
-        # Self-booking prevention
         if listing.owner == user:
             raise serializers.ValidationError(
                 "You cannot book your own listing."
             )
 
-        # Date conflict detection
         if Booking.check_date_conflict(listing_id, start_date, end_date):
             raise serializers.ValidationError(
                 "This listing is already booked for the selected dates."
@@ -71,21 +78,47 @@ class BookingCreateSerializer(serializers.ModelSerializer):
 
 
 class BookingDetailSerializer(serializers.ModelSerializer):
-    """Detailed booking view with listing summary and renter info."""
+    """
+    Detailed booking view.
+    Renter contact (phone, email) is only visible to the listing owner
+    after the booking is approved.
+    """
 
-    renter = UserSummarySerializer(read_only=True)
+    renter = serializers.SerializerMethodField()
     listing_title = serializers.CharField(source="listing.title", read_only=True)
     listing_slug = serializers.CharField(source="listing.slug", read_only=True)
     listing_city = serializers.CharField(source="listing.city", read_only=True)
+    contact_visible = serializers.SerializerMethodField()
 
     class Meta:
         model = Booking
         fields = [
             "id", "listing", "listing_title", "listing_slug", "listing_city",
-            "renter", "start_date", "end_date", "total_price",
+            "renter", "contact_visible", "start_date", "end_date", "total_price",
             "deposit_amount", "status", "note", "cancellation_reason",
             "created_at", "updated_at",
         ]
+
+    def _can_see_contact(self, booking):
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return False
+        user = request.user
+        if user.role == "admin":
+            return True
+        if booking.renter == user:
+            return True
+        if booking.listing.owner == user and booking.status in APPROVED_STATUSES:
+            return True
+        return False
+
+    def get_contact_visible(self, booking):
+        return self._can_see_contact(booking)
+
+    def get_renter(self, booking):
+        if self._can_see_contact(booking):
+            return RenterContactSerializer(booking.renter).data
+        return UserSummarySerializer(booking.renter).data
 
 
 class BookingStatusUpdateSerializer(serializers.Serializer):
@@ -107,10 +140,16 @@ class BookingStatusUpdateSerializer(serializers.Serializer):
                 f"Cannot transition from '{booking.status}' to '{new_status}'."
             )
 
-        # Require reason for rejection/cancellation
         if new_status in ("rejected", "cancelled") and not attrs.get("cancellation_reason"):
             raise serializers.ValidationError(
                 {"cancellation_reason": "Reason is required for rejection/cancellation."}
             )
+
+        if new_status == "approved":
+            from subscriptions.services import check_landlord_can_approve
+            landlord = booking.listing.owner
+            allowed, error = check_landlord_can_approve(landlord)
+            if not allowed:
+                raise serializers.ValidationError(error)
 
         return attrs

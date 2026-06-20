@@ -23,6 +23,7 @@ INSTALLED_APPS = [
     "bookings.apps.BookingsConfig",
     "reviews.apps.ReviewsConfig",
     "payments.apps.PaymentsConfig",
+    "subscriptions.apps.SubscriptionsConfig",
     "unfold",
     "unfold.contrib.filters",
     "unfold.contrib.forms",
@@ -242,6 +243,26 @@ UNFOLD = {
                         "link": "/admin/accounts/user/",
                     },
                     {
+                        "title": "Subscription Plans",
+                        "icon": "card_membership",
+                        "link": "/admin/subscriptions/subscriptionplan/",
+                    },
+                    {
+                        "title": "Landlord Subscriptions",
+                        "icon": "business",
+                        "link": "/admin/subscriptions/landlordsubscription/",
+                    },
+                    {
+                        "title": "Customer Premium",
+                        "icon": "diamond",
+                        "link": "/admin/subscriptions/customerpremiumsubscription/",
+                    },
+                    {
+                        "title": "Platform Settings",
+                        "icon": "settings",
+                        "link": "/admin/subscriptions/platformsettings/",
+                    },
+                    {
                         "title": "Groups",
                         "icon": "group_work",
                         "link": "/admin/auth/group/",
@@ -282,6 +303,11 @@ UNFOLD = {
                         "title": "Payments",
                         "icon": "payments",
                         "link": "/admin/payments/payment/",
+                    },
+                    {
+                        "title": "Income Dashboard",
+                        "icon": "analytics",
+                        "link": "/admin/payments/payment/income-dashboard/",
                     },
                     {
                         "title": "Reviews",
@@ -336,6 +362,20 @@ CELERY_BEAT_SCHEDULE = {
 # Chapa Payment Gateway
 # ---------------------------------------------------------------------------
 CHAPA_SECRET_KEY = os.environ.get("CHAPA_SECRET_KEY", "")
+
+# ---------------------------------------------------------------------------
+# Email Configuration (OTP verification — set credentials in .env)
+# ---------------------------------------------------------------------------
+EMAIL_BACKEND = os.environ.get(
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.console.EmailBackend",
+)
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "smtp.gmail.com")
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
+EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True") == "True"
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "BetRent <noreply@betrent.et>")
 
 # ---------------------------------------------------------------------------
 # Featured Listing Promotion Pricing (ETB)

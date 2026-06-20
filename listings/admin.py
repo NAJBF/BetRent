@@ -20,9 +20,10 @@ class ListingAdmin(ModelAdmin):
         "display_condition",
         "display_status",
         "display_featured",
+        "display_premium",
         "views_count",
     ]
-    list_filter = ["is_active", "is_featured", "condition", "city", "category"]
+    list_filter = ["is_active", "is_featured", "is_premium_post", "condition", "city", "category"]
     search_fields = ["title", "description", "city", "owner__email"]
     autocomplete_fields = ["owner", "category"]
     readonly_fields = ["views_count", "slug", "created_at", "updated_at"]
@@ -63,6 +64,10 @@ class ListingAdmin(ModelAdmin):
     def display_featured(self, instance):
         return instance.is_featured
 
+    @display(description="Premium Post", boolean=True)
+    def display_premium(self, instance):
+        return instance.is_premium_post
+
     fieldsets = (
         (None, {"fields": ("title", "slug", "owner", "category")}),
         ("Pricing & Deposit", {
@@ -73,9 +78,9 @@ class ListingAdmin(ModelAdmin):
             "classes": ["tab"],
             "fields": ("description", "condition", "city", "address")
         }),
-        ("Featured Promotion", {
+        ("Premium & Featured", {
             "classes": ["tab"],
-            "fields": ("is_featured", "featured_until")
+            "fields": ("is_premium_post", "is_featured", "featured_until")
         }),
         ("System Metrics", {
             "classes": ["tab"],

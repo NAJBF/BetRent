@@ -47,7 +47,11 @@ class UserAdmin(BaseUserAdmin, ModelAdmin):
         }),
         ("Role & Permissions", {
             "classes": ["tab"],
-            "fields": ("role", "is_active", "is_staff", "is_superuser")
+            "fields": (
+                "role", "email_verified", "account_status",
+                "is_premium_customer", "premium_until",
+                "is_active", "is_staff", "is_superuser",
+            ),
         }),
         ("Activity Metadata", {
             "classes": ["tab"],
