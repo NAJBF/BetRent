@@ -8,10 +8,12 @@ from .views import (
     MyLandlordSubscriptionView,
     PlanListView,
     SelectLandlordPlanView,
+    SubscriptionUpgradeView,
 )
 
 urlpatterns = [
     path("plans/", PlanListView.as_view(), name="plan-list"),
+    path("upgrade/", SubscriptionUpgradeView.as_view(), name="subscription-upgrade"),
     path("landlord/select-plan/", SelectLandlordPlanView.as_view(), name="landlord-select-plan"),
     path("landlord/me/", MyLandlordSubscriptionView.as_view(), name="landlord-subscription-me"),
     path(

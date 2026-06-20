@@ -1,3 +1,6 @@
+import os
+
+from django.conf import settings
 from rest_framework.permissions import BasePermission
 
 
@@ -27,17 +30,31 @@ class IsOwnerOrAdmin(BasePermission):
     """
     Object-level permission: allows access if the requesting user
     is the object owner or an admin.
-
-    Expects the object to have an 'owner' attribute, or falls back
-    to checking against common FK names (renter, reviewer, user).
     """
 
     def has_object_permission(self, request, view, obj):
         if request.user.role == "admin":
             return True
-        # Try common owner field names
         for attr in ("owner", "renter", "reviewer", "user"):
             owner = getattr(obj, attr, None)
             if owner is not None:
                 return owner == request.user
         return False
+
+
+class HasPaymentAppToken(BasePermission):
+    """
+    Static app token for the external payment record endpoint only.
+    Send header: X-App-Token: <PAYMENT_APP_TOKEN>
+    """
+
+    def has_permission(self, request, view):
+        expected = getattr(settings, "PAYMENT_APP_TOKEN", "") or os.environ.get(
+            "PAYMENT_APP_TOKEN", ""
+        )
+        if not expected:
+            return False
+        token = request.headers.get("X-App-Token") or request.headers.get(
+            "Authorization", ""
+        ).replace("Bearer ", "").strip()
+        return token == expected

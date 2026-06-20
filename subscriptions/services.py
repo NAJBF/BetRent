@@ -1,4 +1,5 @@
 from datetime import timedelta
+import uuid
 
 from django.utils import timezone
 
@@ -183,3 +184,40 @@ def create_landlord_subscription(user, plan):
         user.save(update_fields=["account_status"])
 
     return subscription
+
+
+def upgrade_landlord_plan(user, plan):
+    """Upgrade or change landlord plan — cancels current active/pending and creates new."""
+    LandlordSubscription.objects.filter(
+        user=user,
+        status__in=[
+            LandlordSubscription.Status.ACTIVE,
+            LandlordSubscription.Status.PENDING,
+        ],
+    ).update(status=LandlordSubscription.Status.CANCELLED)
+
+    return create_landlord_subscription(user, plan)
+
+
+def initiate_customer_premium_upgrade(user):
+    """Create or reset a pending customer premium subscription with checkout ref."""
+    settings = PlatformSettings.get_settings()
+    subscription, created = CustomerPremiumSubscription.objects.get_or_create(
+        user=user,
+        defaults={
+            "amount": settings.customer_premium_price,
+            "status": CustomerPremiumSubscription.Status.PENDING,
+            "payment_status": CustomerPremiumSubscription.PaymentStatus.PENDING,
+        },
+    )
+
+    if not created and subscription.payment_status != CustomerPremiumSubscription.PaymentStatus.COMPLETED:
+        subscription.amount = settings.customer_premium_price
+        subscription.status = CustomerPremiumSubscription.Status.PENDING
+        subscription.payment_status = CustomerPremiumSubscription.PaymentStatus.PENDING
+        subscription.transaction_ref = f"CPREM-{uuid.uuid4().hex[:12].upper()}"
+        subscription.checkout_url = ""
+        subscription.save()
+
+    return subscription, settings.customer_premium_price
+

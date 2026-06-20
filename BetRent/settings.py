@@ -363,6 +363,9 @@ CELERY_BEAT_SCHEDULE = {
 # ---------------------------------------------------------------------------
 CHAPA_SECRET_KEY = os.environ.get("CHAPA_SECRET_KEY", "")
 
+# Static token for external payment record endpoint (X-App-Token header)
+PAYMENT_APP_TOKEN = os.environ.get("PAYMENT_APP_TOKEN", "")
+
 # ---------------------------------------------------------------------------
 # Email Configuration (OTP verification — set credentials in .env)
 # ---------------------------------------------------------------------------

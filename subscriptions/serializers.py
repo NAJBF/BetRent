@@ -47,6 +47,45 @@ class LandlordSubscriptionSerializer(serializers.ModelSerializer):
         ]
 
 
+class UpgradeSerializer(serializers.Serializer):
+    """
+    Unified upgrade request.
+    Landlords: provide plan_id.
+    Customers: set upgrade_type to 'customer_premium' (plan_id not needed).
+    """
+
+    plan_id = serializers.UUIDField(required=False, allow_null=True)
+    upgrade_type = serializers.ChoiceField(
+        choices=[("customer_premium", "Customer Premium")],
+        required=False,
+    )
+
+    def validate(self, attrs):
+        user = self.context["request"].user
+        plan_id = attrs.get("plan_id")
+        upgrade_type = attrs.get("upgrade_type")
+
+        if user.role == "landlord":
+            if not plan_id:
+                raise serializers.ValidationError(
+                    {"plan_id": "Landlords must provide a plan_id to upgrade."}
+                )
+            if not SubscriptionPlan.objects.filter(id=plan_id, is_active=True).exists():
+                raise serializers.ValidationError({"plan_id": "Plan not found or inactive."})
+        elif user.role == "customer":
+            if plan_id:
+                raise serializers.ValidationError(
+                    {"plan_id": "Customers do not select a plan. Use upgrade_type 'customer_premium'."}
+                )
+            if upgrade_type != "customer_premium":
+                raise serializers.ValidationError(
+                    {"upgrade_type": "Customers must set upgrade_type to 'customer_premium'."}
+                )
+        else:
+            raise serializers.ValidationError("Only landlords and customers can upgrade.")
+
+        return attrs
+
 class SelectPlanSerializer(serializers.Serializer):
     plan_id = serializers.UUIDField()
 
@@ -54,6 +93,10 @@ class SelectPlanSerializer(serializers.Serializer):
         if not SubscriptionPlan.objects.filter(id=value, is_active=True).exists():
             raise serializers.ValidationError("Plan not found or inactive.")
         return value
+
+
+class VerifyTransactionSerializer(serializers.Serializer):
+    transaction_id = serializers.CharField(max_length=100)
 
 
 class CustomerPremiumStatusSerializer(serializers.Serializer):
@@ -64,3 +107,4 @@ class CustomerPremiumStatusSerializer(serializers.Serializer):
     transaction_ref = serializers.CharField(allow_null=True)
     checkout_url = serializers.CharField(allow_null=True)
     amount = serializers.DecimalField(max_digits=10, decimal_places=2, allow_null=True)
+

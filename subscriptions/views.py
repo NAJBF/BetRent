@@ -4,12 +4,9 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from drf_spectacular.utils import extend_schema
 
-from core.permissions import IsAdminRole
-from payments.services import ChapaService
 from subscriptions.models import (
     CustomerPremiumSubscription,
     LandlordSubscription,
-    PlatformSettings,
     SubscriptionPlan,
 )
 from subscriptions.serializers import (
@@ -17,28 +14,105 @@ from subscriptions.serializers import (
     LandlordSubscriptionSerializer,
     SelectPlanSerializer,
     SubscriptionPlanSerializer,
+    UpgradeSerializer,
 )
 from subscriptions.services import (
-    activate_customer_premium,
-    activate_landlord_subscription,
     create_landlord_subscription,
     get_active_landlord_subscription,
     get_pending_landlord_subscription,
+    initiate_customer_premium_upgrade,
+    upgrade_landlord_plan,
 )
+from payments.subscription_payment import apply_subscription_payment
 
 
 class PlanListView(generics.ListAPIView):
-    """GET /api/v1/subscriptions/plans/ — List active landlord plans."""
+    """GET /api/v1/subscriptions/plans/ — List active landlord plans for mobile app."""
 
     serializer_class = SubscriptionPlanSerializer
     permission_classes = [AllowAny]
     queryset = SubscriptionPlan.objects.filter(is_active=True)
 
 
+class SubscriptionUpgradeView(APIView):
+    """
+    POST /api/v1/subscriptions/upgrade/
+    Unified upgrade endpoint for landlords (plan_id) and customers (upgrade_type).
+    Returns transaction_id for the external payment system — no Chapa redirect.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(request=UpgradeSerializer)
+    def post(self, request):
+        serializer = UpgradeSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        user = request.user
+
+        if user.role == "landlord":
+            return self._upgrade_landlord(user, serializer.validated_data["plan_id"])
+        return self._upgrade_customer_premium(user)
+
+    def _upgrade_landlord(self, user, plan_id):
+        if not user.email_verified:
+            return Response(
+                {"detail": "Please verify your email before upgrading."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        plan = SubscriptionPlan.objects.get(id=plan_id)
+
+        if get_active_landlord_subscription(user) or get_pending_landlord_subscription(user):
+            subscription = upgrade_landlord_plan(user, plan)
+        else:
+            subscription = create_landlord_subscription(user, plan)
+
+        user.refresh_from_db()
+        return Response(
+            {
+                "payment_type": "landlord",
+                "subscription": LandlordSubscriptionSerializer(subscription).data,
+                "transaction_id": subscription.transaction_ref,
+                "transaction_ref": subscription.transaction_ref,
+                "amount": subscription.amount,
+                "account_status": user.account_status,
+                "message": (
+                    "Plan activated."
+                    if subscription.status == LandlordSubscription.Status.ACTIVE
+                    else "Pay externally using transaction_id, then call POST /payments/external/verify/."
+                ),
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    def _upgrade_customer_premium(self, user):
+        if user.can_view_premium_listings:
+            return Response(
+                {"detail": "You already have an active premium subscription."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        subscription, amount = initiate_customer_premium_upgrade(user)
+
+        return Response(
+            {
+                "payment_type": "customer_premium",
+                "transaction_id": subscription.transaction_ref,
+                "transaction_ref": subscription.transaction_ref,
+                "amount": subscription.amount,
+                "subscription_status": subscription.status,
+                "payment_status": subscription.payment_status,
+                "message": "Pay externally using transaction_id, then call POST /payments/external/verify/.",
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
 class SelectLandlordPlanView(APIView):
     """
     POST /api/v1/subscriptions/landlord/select-plan/
-    Landlord selects a plan after email verification.
+    Landlord selects a plan after email verification (registration fallback).
+    Prefer POST /subscriptions/upgrade/ for upgrades.
     """
 
     permission_classes = [IsAuthenticated]
@@ -57,39 +131,26 @@ class SelectLandlordPlanView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Block if already has active subscription
-        if get_active_landlord_subscription(user):
-            return Response(
-                {"detail": "You already have an active subscription."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
         serializer = SelectPlanSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         plan = SubscriptionPlan.objects.get(id=serializer.validated_data["plan_id"])
 
-        subscription = create_landlord_subscription(user, plan)
-
-        # Initiate Chapa payment for paid plans
-        if plan.price > 0 and plan.plan_type != SubscriptionPlan.PlanType.FREE:
-            chapa_result = ChapaService.initiate_payment(
-                amount=float(plan.price),
-                tx_ref=subscription.transaction_ref,
-                email=user.email,
-                first_name=user.full_name.split()[0] if user.full_name else "User",
-            )
-            subscription.checkout_url = chapa_result.get("checkout_url", "")
-            subscription.save(update_fields=["checkout_url"])
+        if get_active_landlord_subscription(user) or get_pending_landlord_subscription(user):
+            subscription = upgrade_landlord_plan(user, plan)
+        else:
+            subscription = create_landlord_subscription(user, plan)
 
         user.refresh_from_db()
         return Response(
             {
                 "subscription": LandlordSubscriptionSerializer(subscription).data,
+                "transaction_id": subscription.transaction_ref,
+                "amount": subscription.amount,
                 "account_status": user.account_status,
                 "message": (
                     "Plan activated."
                     if subscription.status == LandlordSubscription.Status.ACTIVE
-                    else "Plan selected. Complete payment or wait for admin approval."
+                    else "Pay externally using transaction_id, then call POST /payments/external/verify/."
                 ),
             },
             status=status.HTTP_201_CREATED,
@@ -112,146 +173,78 @@ class MyLandlordSubscriptionView(APIView):
 
 
 class LandlordPaymentVerifyView(APIView):
-    """GET /api/v1/subscriptions/landlord/verify/{tx_ref}/ — Verify landlord plan payment."""
+    """GET /api/v1/subscriptions/landlord/verify/{tx_ref}/ — Verify via external payment record."""
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request, tx_ref):
-        try:
-            subscription = LandlordSubscription.objects.select_related("plan").get(
-                transaction_ref=tx_ref,
-                user=request.user,
-            )
-        except LandlordSubscription.DoesNotExist:
+        if not LandlordSubscription.objects.filter(transaction_ref=tx_ref, user=request.user).exists():
             return Response({"detail": "Subscription not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        if subscription.payment_status == LandlordSubscription.PaymentStatus.COMPLETED:
-            return Response(LandlordSubscriptionSerializer(subscription).data)
+        success, message, _ = apply_subscription_payment(tx_ref)
 
-        # Try Chapa verify; admin approval is the fallback
-        result = ChapaService.verify_payment(tx_ref)
-        if result.get("status") == "success":
-            activate_landlord_subscription(subscription)
-        else:
+        if not success:
             return Response(
-                {
-                    "detail": "Payment not yet verified. Awaiting admin approval or payment completion.",
-                    "subscription": LandlordSubscriptionSerializer(subscription).data,
-                },
+                {"success": False, "message": message, "transaction_id": tx_ref},
                 status=status.HTTP_402_PAYMENT_REQUIRED,
             )
 
-        subscription.refresh_from_db()
-        return Response(LandlordSubscriptionSerializer(subscription).data)
+        sub = LandlordSubscription.objects.select_related("plan").get(
+            transaction_ref=tx_ref, user=request.user
+        )
+        request.user.refresh_from_db()
+        return Response(
+            {
+                "success": True,
+                "message": message,
+                "subscription": LandlordSubscriptionSerializer(sub).data,
+                "account_status": request.user.account_status,
+            }
+        )
 
 
 class CustomerPremiumUpgradeView(APIView):
-    """
-    POST /api/v1/subscriptions/customer/premium/upgrade/
-    Initiate customer premium subscription (Chapa + admin approval fallback).
-    """
+    """POST /api/v1/subscriptions/customer/premium/upgrade/ — Alias for unified upgrade."""
 
     permission_classes = [IsAuthenticated]
 
     @extend_schema(responses={201: CustomerPremiumStatusSerializer})
     def post(self, request):
-        user = request.user
-        if user.role != "customer":
+        if request.user.role != "customer":
             return Response(
                 {"detail": "Only customers can upgrade to premium."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        if user.can_view_premium_listings:
-            return Response(
-                {"detail": "You already have an active premium subscription."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        settings = PlatformSettings.get_settings()
-        subscription, _ = CustomerPremiumSubscription.objects.get_or_create(
-            user=user,
-            defaults={
-                "amount": settings.customer_premium_price,
-                "status": CustomerPremiumSubscription.Status.PENDING,
-                "payment_status": CustomerPremiumSubscription.PaymentStatus.PENDING,
-            },
-        )
-
-        if subscription.payment_status != CustomerPremiumSubscription.PaymentStatus.COMPLETED:
-            subscription.amount = settings.customer_premium_price
-            subscription.status = CustomerPremiumSubscription.Status.PENDING
-            subscription.payment_status = CustomerPremiumSubscription.PaymentStatus.PENDING
-            subscription.save()
-
-            chapa_result = ChapaService.initiate_payment(
-                amount=float(settings.customer_premium_price),
-                tx_ref=subscription.transaction_ref,
-                email=user.email,
-                first_name=user.full_name.split()[0] if user.full_name else "User",
-            )
-            subscription.checkout_url = chapa_result.get("checkout_url", "")
-            subscription.save(update_fields=["checkout_url"])
-
-        return Response(
-            {
-                "is_premium_customer": user.is_premium_customer,
-                "premium_until": user.premium_until,
-                "subscription_status": subscription.status,
-                "payment_status": subscription.payment_status,
-                "transaction_ref": subscription.transaction_ref,
-                "checkout_url": subscription.checkout_url,
-                "amount": subscription.amount,
-                "message": "Complete payment or wait for admin approval to access premium listings.",
-            },
-            status=status.HTTP_201_CREATED,
-        )
+        return SubscriptionUpgradeView()._upgrade_customer_premium(request.user)
 
 
 class CustomerPremiumVerifyView(APIView):
-    """GET /api/v1/subscriptions/customer/premium/verify/{tx_ref}/"""
+    """GET /api/v1/subscriptions/customer/premium/verify/{tx_ref}/ — Verify via external payment record."""
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request, tx_ref):
-        try:
-            subscription = CustomerPremiumSubscription.objects.get(
-                transaction_ref=tx_ref,
-                user=request.user,
-            )
-        except CustomerPremiumSubscription.DoesNotExist:
+        if not CustomerPremiumSubscription.objects.filter(
+            transaction_ref=tx_ref, user=request.user
+        ).exists():
             return Response({"detail": "Subscription not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        if subscription.payment_status == CustomerPremiumSubscription.PaymentStatus.COMPLETED:
-            user = request.user
+        success, message, _ = apply_subscription_payment(tx_ref)
+
+        if not success:
             return Response(
-                {
-                    "is_premium_customer": user.is_premium_customer,
-                    "premium_until": user.premium_until,
-                    "subscription_status": subscription.status,
-                    "payment_status": subscription.payment_status,
-                }
+                {"success": False, "message": message, "transaction_id": tx_ref},
+                status=status.HTTP_402_PAYMENT_REQUIRED,
             )
 
-        result = ChapaService.verify_payment(tx_ref)
-        if result.get("status") == "success":
-            activate_customer_premium(subscription)
-            request.user.refresh_from_db()
-            return Response(
-                {
-                    "is_premium_customer": request.user.is_premium_customer,
-                    "premium_until": request.user.premium_until,
-                    "subscription_status": subscription.status,
-                    "payment_status": subscription.payment_status,
-                }
-            )
-
+        request.user.refresh_from_db()
         return Response(
             {
-                "detail": "Payment not yet verified. Awaiting admin approval or payment completion.",
-                "subscription_status": subscription.status,
-                "payment_status": subscription.payment_status,
-            },
-            status=status.HTTP_402_PAYMENT_REQUIRED,
+                "success": True,
+                "message": message,
+                "is_premium_customer": request.user.is_premium_customer,
+                "premium_until": request.user.premium_until,
+            }
         )
 
 

@@ -123,19 +123,6 @@ class VerifyEmailView(APIView):
                 subscription = create_landlord_subscription(user, plan)
                 cache.delete(f"pending_plan:{user.id}")
 
-                checkout_url = ""
-                if plan.price > 0 and plan.plan_type != SubscriptionPlan.PlanType.FREE:
-                    from payments.services import ChapaService
-                    chapa_result = ChapaService.initiate_payment(
-                        amount=float(plan.price),
-                        tx_ref=subscription.transaction_ref,
-                        email=user.email,
-                        first_name=user.full_name.split()[0] if user.full_name else "User",
-                    )
-                    subscription.checkout_url = chapa_result.get("checkout_url", "")
-                    subscription.save(update_fields=["checkout_url"])
-                    checkout_url = subscription.checkout_url
-
                 user.refresh_from_db()
                 return Response(
                     {
@@ -149,8 +136,9 @@ class VerifyEmailView(APIView):
                         ),
                         "subscription_status": subscription.status,
                         "payment_status": subscription.payment_status,
+                        "transaction_id": subscription.transaction_ref,
                         "transaction_ref": subscription.transaction_ref,
-                        "checkout_url": checkout_url,
+                        "amount": subscription.amount,
                     }
                 )
             except SubscriptionPlan.DoesNotExist:

@@ -101,10 +101,10 @@ class Booking(BaseModel):
             conflicting = conflicting.exclude(pk=exclude_id)
         return conflicting.exists()
 
-    # Valid status transitions
+    # Valid status transitions — bookings are free; no payment step required
     VALID_TRANSITIONS = {
         "pending": ["approved", "rejected", "cancelled"],
-        "approved": ["paid", "cancelled"],
+        "approved": ["active", "cancelled"],
         "paid": ["active", "cancelled"],
         "active": ["completed"],
     }

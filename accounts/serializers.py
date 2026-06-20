@@ -31,9 +31,17 @@ class RegisterSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
-        if attrs.get("role") == "landlord" and not attrs.get("plan_id"):
-            # plan_id is optional at register — can be selected after OTP verify
-            pass
+        role = attrs.get("role", User.Role.CUSTOMER)
+        plan_id = attrs.get("plan_id")
+
+        if role == User.Role.LANDLORD and not plan_id:
+            raise serializers.ValidationError(
+                {"plan_id": "Landlords must select a subscription plan during registration."}
+            )
+
+        if role == User.Role.CUSTOMER:
+            attrs.pop("plan_id", None)
+
         return attrs
 
     def create(self, validated_data):

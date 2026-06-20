@@ -4,7 +4,7 @@ from django.urls import path
 from django.shortcuts import render
 from unfold.admin import ModelAdmin
 
-from .models import Payment
+from .models import Payment, ExternalPaymentRecord
 
 
 @admin.register(Payment)
@@ -125,3 +125,19 @@ class PaymentAdmin(ModelAdmin):
             "recent_payments": recent_payments[:20],
         }
         return render(request, "admin/income_dashboard.html", context)
+
+
+@admin.register(ExternalPaymentRecord)
+class ExternalPaymentRecordAdmin(ModelAdmin):
+    list_display = [
+        "transaction_id",
+        "payer_name",
+        "payment_status",
+        "amount",
+        "processed",
+        "created_at",
+    ]
+    list_filter = ["payment_status", "processed"]
+    search_fields = ["transaction_id", "payer_name"]
+    readonly_fields = ["created_at", "updated_at"]
+    ordering = ["-created_at"]

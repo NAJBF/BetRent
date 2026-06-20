@@ -5,180 +5,164 @@ from rest_framework.views import APIView
 from rest_framework.exceptions import NotFound, PermissionDenied
 from drf_spectacular.utils import extend_schema
 
-from .models import Payment
+from core.permissions import HasPaymentAppToken
+from payments.models import ExternalPaymentRecord, Payment
+from payments.subscription_payment import apply_subscription_payment
 from .serializers import (
-    PaymentInitiateSerializer,
+    ExternalPaymentRecordSerializer,
     PaymentDetailSerializer,
-    ChapaWebhookSerializer,
+    PaymentInitiateSerializer,
+    VerifyTransactionRequestSerializer,
 )
-from .services import ChapaService
 from bookings.models import Booking
 
 
 class PaymentInitiateView(APIView):
-    """POST /api/v1/payments/initiate — Start payment for approved booking."""
+    """
+    POST /api/v1/payments/initiate/
+    Deprecated — customers book for free. Use /api/v1/subscriptions/upgrade/ instead.
+    """
 
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(request=PaymentInitiateSerializer, responses={201: PaymentDetailSerializer})
     def post(self, request):
-        serializer = PaymentInitiateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        booking = Booking.objects.select_related("renter", "listing").get(
-            id=serializer.validated_data["booking_id"]
-        )
-
-        # Only the renter can initiate payment
-        if booking.renter != request.user and request.user.role != "admin":
-            raise PermissionDenied("Only the renter can initiate payment.")
-
-        # Create payment record
-        payment = Payment.objects.create(
-            booking=booking,
-            amount=booking.total_price,
-            method=serializer.validated_data["method"],
-        )
-
-        # Initiate with Chapa (or mock)
-        if payment.method == "chapa":
-            chapa_result = ChapaService.initiate_payment(
-                amount=float(payment.amount),
-                tx_ref=payment.transaction_ref,
-                email=request.user.email,
-                first_name=request.user.full_name.split()[0] if request.user.full_name else "User",
-            )
-            payment.checkout_url = chapa_result.get("checkout_url", "")
-            payment.save(update_fields=["checkout_url"])
-
         return Response(
-            PaymentDetailSerializer(payment).data,
+            {
+                "detail": "Booking payments are not required. Customers book for free. "
+                "Only subscription upgrades require payment via /api/v1/subscriptions/upgrade/."
+            },
+            status=status.HTTP_410_GONE,
+        )
+
+
+class ExternalPaymentRecordView(APIView):
+    """
+    POST /api/v1/payments/external/record/
+    Public endpoint protected by static app token (X-App-Token header).
+    External payment system submits transaction details here.
+    """
+
+    permission_classes = [HasPaymentAppToken]
+
+    @extend_schema(request=ExternalPaymentRecordSerializer, responses={201: ExternalPaymentRecordSerializer})
+    def post(self, request):
+        serializer = ExternalPaymentRecordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        record = serializer.save()
+        return Response(
+            ExternalPaymentRecordSerializer(record).data,
             status=status.HTTP_201_CREATED,
         )
 
 
+class ExternalPaymentVerifyView(APIView):
+    """
+    POST /api/v1/payments/external/verify/
+    Verify a subscription payment by transaction ID and activate the user plan.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(request=VerifyTransactionRequestSerializer)
+    def post(self, request):
+        serializer = VerifyTransactionRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        transaction_id = serializer.validated_data["transaction_id"]
+
+        if not _user_owns_transaction(request.user, transaction_id):
+            return Response(
+                {"detail": "This transaction does not belong to your account."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        success, message, payment_type = apply_subscription_payment(transaction_id)
+        request.user.refresh_from_db()
+
+        if not success:
+            return Response(
+                {
+                    "success": False,
+                    "message": message,
+                    "transaction_id": transaction_id,
+                },
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
+
+        response = {
+            "success": True,
+            "message": message,
+            "transaction_id": transaction_id,
+            "payment_type": payment_type,
+            "account_status": request.user.account_status,
+            "is_premium_customer": request.user.is_premium_customer,
+            "premium_until": request.user.premium_until,
+        }
+
+        from subscriptions.models import LandlordSubscription
+        from subscriptions.serializers import LandlordSubscriptionSerializer
+
+        if payment_type == "landlord":
+            sub = LandlordSubscription.objects.filter(
+                transaction_ref=transaction_id, user=request.user
+            ).select_related("plan").first()
+            if sub:
+                response["subscription"] = LandlordSubscriptionSerializer(sub).data
+
+        return Response(response, status=status.HTTP_200_OK)
+
+
+def _user_owns_transaction(user, transaction_id):
+    from subscriptions.models import CustomerPremiumSubscription, LandlordSubscription
+
+    if LandlordSubscription.objects.filter(transaction_ref=transaction_id, user=user).exists():
+        return True
+    if CustomerPremiumSubscription.objects.filter(transaction_ref=transaction_id, user=user).exists():
+        return True
+    return user.role == "admin"
+
+
 class PaymentVerifyView(APIView):
-    """GET /api/v1/payments/verify/{tx_ref} — Check payment status."""
+    """GET /api/v1/payments/verify/{tx_ref}/ — Legacy booking payment verify."""
 
     permission_classes = [IsAuthenticated]
 
     @extend_schema(responses={200: PaymentDetailSerializer})
     def get(self, request, tx_ref):
         try:
-            payment = Payment.objects.select_related("booking").get(
-                transaction_ref=tx_ref
-            )
+            payment = Payment.objects.select_related("booking").get(transaction_ref=tx_ref)
         except Payment.DoesNotExist:
             raise NotFound("Payment not found.")
-
-        # Verify with Chapa if still pending
-        if payment.status == "pending" and payment.method == "chapa":
-            result = ChapaService.verify_payment(tx_ref)
-            if result["status"] == "success":
-                payment.status = "completed"
-                payment.save(update_fields=["status"])
-                # Update booking status to paid
-                booking = payment.booking
-                booking.status = "paid"
-                booking.save(update_fields=["status"])
 
         return Response(PaymentDetailSerializer(payment).data)
 
 
 class BookingPaymentView(APIView):
-    """GET /api/v1/payments/booking/{booking_id} — Get payment for a booking."""
+    """GET /api/v1/payments/booking/{booking_id}/ — Legacy booking payment lookup."""
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request, booking_id):
         try:
-            payment = Payment.objects.select_related("booking").get(
-                booking_id=booking_id
-            )
+            payment = Payment.objects.select_related("booking").get(booking_id=booking_id)
         except Payment.DoesNotExist:
-            raise NotFound("Payment not found for this booking.")
+            raise NotFound("No payment record for this booking. Booking payments are not required.")
 
         return Response(PaymentDetailSerializer(payment).data)
 
 
 class ChapaWebhookView(APIView):
-    """
-    POST /api/v1/payments/webhook/chapa
-    Chapa calls this on payment completion. No auth required.
-    Auto-completes payment and marks booking as paid.
-    """
+    """Legacy Chapa webhook for booking payments."""
 
     permission_classes = [AllowAny]
 
-    @extend_schema(request=ChapaWebhookSerializer, responses={200: None})
     def post(self, request):
-        serializer = ChapaWebhookSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        tx_ref = serializer.validated_data["tx_ref"]
-        webhook_status = serializer.validated_data["status"]
-
-        try:
-            payment = Payment.objects.select_related("booking").get(
-                transaction_ref=tx_ref
-            )
-        except Payment.DoesNotExist:
-            raise NotFound("Payment not found.")
-
-        if webhook_status == "success":
-            payment.status = "completed"
-            payment.save(update_fields=["status"])
-
-            booking = payment.booking
-            if booking.status == "approved":
-                booking.status = "paid"
-                booking.save(update_fields=["status"])
-        else:
-            payment.status = "failed"
-            payment.save(update_fields=["status"])
-
         return Response({"status": "received"}, status=status.HTTP_200_OK)
 
 
 class PaymentManualUpdateView(APIView):
-    """
-    PUT /api/v1/payments/{payment_id}/manual-update/
-    Allows Admin or Listing Owner to manually mark a payment as completed.
-    Useful for 'cash' or 'bank_transfer' methods.
-    """
+    """Legacy manual booking payment update."""
 
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(request=None, responses={200: PaymentDetailSerializer}) # request is simple status string
     def put(self, request, payment_id):
-        try:
-            payment = Payment.objects.select_related(
-                "booking", "booking__listing"
-            ).get(id=payment_id)
-        except Payment.DoesNotExist:
-            raise NotFound("Payment record not found.")
-
-        user = request.user
-        # Permission: Only Admin or the Listing Owner (the person getting paid)
-        if user.role != "admin" and payment.booking.listing.owner != user:
-            raise PermissionDenied(
-                "You do not have permission to manually update this payment."
-            )
-
-        new_status = request.data.get("status")
-        if new_status not in ["completed", "failed"]:
-            return Response(
-                {"detail": "Invalid status. Use 'completed' or 'failed'."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        payment.status = new_status
-        payment.save(update_fields=["status", "updated_at"])
-
-        # If completed, update the booking status too
-        if new_status == "completed":
-            booking = payment.booking
-            booking.status = "paid"
-            booking.save(update_fields=["status", "updated_at"])
-
-        return Response(PaymentDetailSerializer(payment).data)
+        raise NotFound("Booking payment updates are no longer supported.")

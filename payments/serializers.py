@@ -1,10 +1,11 @@
 from rest_framework import serializers
-from .models import Payment
+
+from payments.models import ExternalPaymentRecord, Payment
 from bookings.models import Booking
 
 
 class PaymentInitiateSerializer(serializers.Serializer):
-    """Initiate a payment for an approved booking."""
+    """Legacy — booking payments are no longer used in the app flow."""
 
     booking_id = serializers.UUIDField()
     method = serializers.ChoiceField(
@@ -13,23 +14,10 @@ class PaymentInitiateSerializer(serializers.Serializer):
     )
 
     def validate_booking_id(self, value):
-        try:
-            booking = Booking.objects.get(id=value)
-        except Booking.DoesNotExist:
-            raise serializers.ValidationError("Booking not found.")
-
-        if booking.status != "approved":
-            raise serializers.ValidationError(
-                "Payment can only be initiated for approved bookings."
-            )
-
-        # Check if payment already exists
-        if hasattr(booking, "payment"):
-            raise serializers.ValidationError(
-                "Payment already exists for this booking."
-            )
-
-        return value
+        raise serializers.ValidationError(
+            "Booking payments are not required. Customers book for free; "
+            "only subscription upgrades require payment."
+        )
 
 
 class PaymentDetailSerializer(serializers.ModelSerializer):
@@ -51,3 +39,44 @@ class ChapaWebhookSerializer(serializers.Serializer):
 
     tx_ref = serializers.CharField()
     status = serializers.CharField()
+
+
+class ExternalPaymentRecordSerializer(serializers.ModelSerializer):
+    """Incoming payment record from external payment system."""
+
+    transaction_id = serializers.CharField(max_length=100)
+    payer_name = serializers.CharField(max_length=255)
+    payment_status = serializers.ChoiceField(choices=ExternalPaymentRecord.Status.choices)
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2)
+
+    class Meta:
+        model = ExternalPaymentRecord
+        fields = [
+            "id",
+            "transaction_id",
+            "payer_name",
+            "payment_status",
+            "amount",
+            "processed",
+            "created_at",
+        ]
+        read_only_fields = ["id", "processed", "created_at"]
+
+    def create(self, validated_data):
+        transaction_id = validated_data["transaction_id"]
+        record, created = ExternalPaymentRecord.objects.update_or_create(
+            transaction_id=transaction_id,
+            defaults={
+                "payer_name": validated_data["payer_name"],
+                "payment_status": validated_data["payment_status"],
+                "amount": validated_data["amount"],
+            },
+        )
+        if not created and validated_data["payment_status"] == ExternalPaymentRecord.Status.COMPLETED:
+            record.processed = False
+            record.save(update_fields=["processed"])
+        return record
+
+
+class VerifyTransactionRequestSerializer(serializers.Serializer):
+    transaction_id = serializers.CharField(max_length=100)
