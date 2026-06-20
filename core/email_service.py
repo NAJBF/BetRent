@@ -4,10 +4,14 @@ import random
 import string
 import urllib.error
 import urllib.request
+from datetime import timedelta
 
 from django.conf import settings
 from django.core.cache import cache
 from django.core.mail import EmailMessage, get_connection
+from django.utils import timezone
+
+from core.models import EmailOTP
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +30,19 @@ def _otp_cache_key(purpose, email):
 def store_otp(email, purpose):
     otp = _generate_otp()
     cache.set(_otp_cache_key(purpose, email), otp, OTP_TTL)
+
+    EmailOTP.objects.filter(
+        email=email.lower(),
+        purpose=purpose,
+        is_used=False,
+    ).update(is_used=True)
+
+    EmailOTP.objects.create(
+        email=email.lower(),
+        purpose=purpose,
+        code=otp,
+        expires_at=timezone.now() + timedelta(seconds=OTP_TTL),
+    )
     return otp
 
 
@@ -34,6 +51,12 @@ def verify_otp(email, purpose, code):
     stored = cache.get(key)
     if stored and stored == code:
         cache.delete(key)
+        EmailOTP.objects.filter(
+            email=email.lower(),
+            purpose=purpose,
+            code=code,
+            is_used=False,
+        ).update(is_used=True)
         return True
     return False
 

@@ -165,9 +165,11 @@ class ListingCreateSerializer(serializers.ModelSerializer):
             validate_premium_post_price,
         )
 
-        allowed, error = check_landlord_can_post(user, is_premium_post=is_premium_post)
+        allowed, result = check_landlord_can_post(user, is_premium_post=is_premium_post)
         if not allowed:
-            raise serializers.ValidationError(error)
+            if isinstance(result, dict):
+                raise serializers.ValidationError(result)
+            raise serializers.ValidationError(result)
 
         if is_premium_post:
             listing = Listing(**{k: v for k, v in attrs.items() if k != "category_id"})
@@ -214,9 +216,11 @@ class ListingUpdateSerializer(serializers.ModelSerializer):
 
         if is_premium_post and not instance.is_premium_post:
             from subscriptions.services import check_landlord_can_post, validate_premium_post_price
-            allowed, error = check_landlord_can_post(user, is_premium_post=True)
+            allowed, result = check_landlord_can_post(user, is_premium_post=True)
             if not allowed:
-                raise serializers.ValidationError(error)
+                if isinstance(result, dict):
+                    raise serializers.ValidationError(result)
+                raise serializers.ValidationError(result)
 
         if is_premium_post:
             from subscriptions.services import validate_premium_post_price

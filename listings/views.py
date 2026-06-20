@@ -168,6 +168,11 @@ class ListingDeleteView(generics.DestroyAPIView):
         # Soft delete — deactivate instead of removing
         instance.is_active = False
         instance.save(update_fields=["is_active"])
+        from subscriptions.services import get_active_landlord_subscription, sync_landlord_usage_counters
+
+        sub = get_active_landlord_subscription(instance.owner)
+        if sub:
+            sync_landlord_usage_counters(sub)
 
 
 class ListingImageCreateView(generics.CreateAPIView):

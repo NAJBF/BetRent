@@ -145,6 +145,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
     plan_id = serializers.UUIDField(source="landlord_plan_id", read_only=True, allow_null=True)
     plan_name = serializers.CharField(source="landlord_plan.name", read_only=True, allow_null=True)
     plan_type = serializers.CharField(source="landlord_plan.plan_type", read_only=True, allow_null=True)
+    subscription_usage = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -153,14 +154,21 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "avatar_url", "role", "is_active", "date_joined",
             "email_verified", "account_status", "is_premium_customer",
             "premium_until", "can_post_listings", "can_view_premium_listings",
-            "plan_id", "plan_name", "plan_type",
+            "plan_id", "plan_name", "plan_type", "subscription_usage",
         ]
         read_only_fields = [
             "id", "email", "role", "is_active", "date_joined",
             "email_verified", "account_status", "is_premium_customer",
             "premium_until", "can_post_listings", "can_view_premium_listings",
-            "plan_id", "plan_name", "plan_type",
+            "plan_id", "plan_name", "plan_type", "subscription_usage",
         ]
+
+    def get_subscription_usage(self, obj):
+        if not obj.is_landlord:
+            return None
+        from subscriptions.services import get_landlord_usage_for_user
+
+        return get_landlord_usage_for_user(obj)
 
 
 class AdminUserSerializer(serializers.ModelSerializer):

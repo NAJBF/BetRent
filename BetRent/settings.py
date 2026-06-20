@@ -338,6 +338,11 @@ UNFOLD = {
                         "link": "/admin/payments/externalpaymentrecord/",
                     },
                     {
+                        "title": "Email OTPs",
+                        "icon": "mail",
+                        "link": "/admin/core/emailotp/",
+                    },
+                    {
                         "title": "Income Dashboard",
                         "icon": "analytics",
                         "link": "/admin/payments/payment/income-dashboard/",

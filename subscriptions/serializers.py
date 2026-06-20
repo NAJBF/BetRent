@@ -25,6 +25,12 @@ class SubscriptionPlanSerializer(serializers.ModelSerializer):
 
 class LandlordSubscriptionSerializer(serializers.ModelSerializer):
     plan = SubscriptionPlanSerializer(read_only=True)
+    max_posts = serializers.IntegerField(source="plan.max_posts", read_only=True)
+    max_premium_posts = serializers.IntegerField(source="plan.max_premium_posts", read_only=True)
+    max_approvals = serializers.IntegerField(source="plan.max_approvals", read_only=True)
+    posts_remaining = serializers.SerializerMethodField()
+    premium_posts_remaining = serializers.SerializerMethodField()
+    approvals_remaining = serializers.SerializerMethodField()
 
     class Meta:
         from subscriptions.models import LandlordSubscription
@@ -43,8 +49,28 @@ class LandlordSubscriptionSerializer(serializers.ModelSerializer):
             "posts_used",
             "approvals_used",
             "premium_posts_used",
+            "max_posts",
+            "max_premium_posts",
+            "max_approvals",
+            "posts_remaining",
+            "premium_posts_remaining",
+            "approvals_remaining",
             "created_at",
         ]
+
+    def _usage(self, obj):
+        from subscriptions.services import get_landlord_usage
+
+        return get_landlord_usage(obj)
+
+    def get_posts_remaining(self, obj):
+        return self._usage(obj)["posts_remaining"]
+
+    def get_premium_posts_remaining(self, obj):
+        return self._usage(obj)["premium_posts_remaining"]
+
+    def get_approvals_remaining(self, obj):
+        return self._usage(obj)["approvals_remaining"]
 
 
 class UpgradeSerializer(serializers.Serializer):

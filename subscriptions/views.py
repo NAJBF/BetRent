@@ -62,6 +62,9 @@ class SubscriptionUpgradeView(APIView):
 
         plan = SubscriptionPlan.objects.get(id=plan_id)
 
+        user.landlord_plan = plan
+        user.save(update_fields=["landlord_plan"])
+
         if get_active_landlord_subscription(user) or get_pending_landlord_subscription(user):
             subscription = upgrade_landlord_plan(user, plan)
         else:
@@ -135,6 +138,9 @@ class SelectLandlordPlanView(APIView):
         serializer.is_valid(raise_exception=True)
         plan = SubscriptionPlan.objects.get(id=serializer.validated_data["plan_id"])
 
+        user.landlord_plan = plan
+        user.save(update_fields=["landlord_plan"])
+
         if get_active_landlord_subscription(user) or get_pending_landlord_subscription(user):
             subscription = upgrade_landlord_plan(user, plan)
         else:
@@ -169,7 +175,12 @@ class MyLandlordSubscriptionView(APIView):
             sub = get_pending_landlord_subscription(request.user)
         if not sub:
             return Response({"detail": "No subscription found."}, status=status.HTTP_404_NOT_FOUND)
-        return Response(LandlordSubscriptionSerializer(sub).data)
+
+        from subscriptions.services import get_landlord_usage
+
+        data = LandlordSubscriptionSerializer(sub).data
+        data["usage"] = get_landlord_usage(sub)
+        return Response(data)
 
 
 class LandlordPaymentVerifyView(APIView):

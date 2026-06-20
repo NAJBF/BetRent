@@ -12,6 +12,26 @@ from .models import (
 from .services import activate_customer_premium, activate_landlord_subscription
 
 
+def _should_activate_landlord_subscription(obj):
+    return (
+        obj.status == LandlordSubscription.Status.ACTIVE
+        or obj.payment_status == LandlordSubscription.PaymentStatus.COMPLETED
+    ) and (
+        obj.status != LandlordSubscription.Status.ACTIVE
+        or obj.payment_status != LandlordSubscription.PaymentStatus.COMPLETED
+    )
+
+
+def _should_activate_customer_premium(obj):
+    return (
+        obj.status == CustomerPremiumSubscription.Status.ACTIVE
+        or obj.payment_status == CustomerPremiumSubscription.PaymentStatus.COMPLETED
+    ) and (
+        obj.status != CustomerPremiumSubscription.Status.ACTIVE
+        or obj.payment_status != CustomerPremiumSubscription.PaymentStatus.COMPLETED
+    )
+
+
 @admin.register(PlatformSettings)
 class PlatformSettingsAdmin(ModelAdmin):
     list_display = ["premium_minimum_price", "customer_premium_price", "customer_premium_duration_days", "updated_at"]
@@ -64,28 +84,20 @@ class LandlordSubscriptionAdmin(ModelAdmin):
     autocomplete_fields = ["user", "plan"]
     ordering = ["-created_at"]
 
-    def save_model(self, request, obj, form, change):
-        if change and "payment_status" in form.changed_data:
-            if obj.payment_status == LandlordSubscription.PaymentStatus.COMPLETED:
-                if obj.status != LandlordSubscription.Status.ACTIVE:
-                    activate_landlord_subscription(obj)
-                    return
-        super().save_model(request, obj, form, change)
+    def save_form(self, request, form, change):
+        """Handles list_editable saves (Django does not call save_model for those)."""
+        obj = form.save(commit=False)
+        if change and _should_activate_landlord_subscription(obj):
+            activate_landlord_subscription(obj)
+            return obj
+        obj.save()
+        return obj
 
-    def save_formset(self, request, form, formset, change):
-        instances = formset.save(commit=False)
-        for instance in instances:
-            if instance.pk:
-                orig = LandlordSubscription.objects.get(pk=instance.pk)
-                if (
-                    orig.payment_status != LandlordSubscription.PaymentStatus.COMPLETED
-                    and instance.payment_status == LandlordSubscription.PaymentStatus.COMPLETED
-                    and instance.status != LandlordSubscription.Status.ACTIVE
-                ):
-                    activate_landlord_subscription(instance)
-                    continue
-            instance.save()
-        formset.save_m2m()
+    def save_model(self, request, obj, form, change):
+        if change and _should_activate_landlord_subscription(obj):
+            activate_landlord_subscription(obj)
+            return
+        super().save_model(request, obj, form, change)
 
 
 @admin.register(CustomerPremiumSubscription)
@@ -107,25 +119,16 @@ class CustomerPremiumSubscriptionAdmin(ModelAdmin):
     autocomplete_fields = ["user"]
     ordering = ["-created_at"]
 
-    def save_model(self, request, obj, form, change):
-        if change and "payment_status" in form.changed_data:
-            if obj.payment_status == CustomerPremiumSubscription.PaymentStatus.COMPLETED:
-                if obj.status != CustomerPremiumSubscription.Status.ACTIVE:
-                    activate_customer_premium(obj)
-                    return
-        super().save_model(request, obj, form, change)
+    def save_form(self, request, form, change):
+        obj = form.save(commit=False)
+        if change and _should_activate_customer_premium(obj):
+            activate_customer_premium(obj)
+            return obj
+        obj.save()
+        return obj
 
-    def save_formset(self, request, form, formset, change):
-        instances = formset.save(commit=False)
-        for instance in instances:
-            if instance.pk:
-                orig = CustomerPremiumSubscription.objects.get(pk=instance.pk)
-                if (
-                    orig.payment_status != CustomerPremiumSubscription.PaymentStatus.COMPLETED
-                    and instance.payment_status == CustomerPremiumSubscription.PaymentStatus.COMPLETED
-                    and instance.status != CustomerPremiumSubscription.Status.ACTIVE
-                ):
-                    activate_customer_premium(instance)
-                    continue
-            instance.save()
-        formset.save_m2m()
+    def save_model(self, request, obj, form, change):
+        if change and _should_activate_customer_premium(obj):
+            activate_customer_premium(obj)
+            return
+        super().save_model(request, obj, form, change)

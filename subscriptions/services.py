@@ -36,7 +36,8 @@ def ensure_landlord_subscription(user):
 
 def get_active_landlord_subscription(user):
     """Return the landlord's current active subscription, if any."""
-    return (
+    now = timezone.now()
+    sub = (
         LandlordSubscription.objects.filter(
             user=user,
             status=LandlordSubscription.Status.ACTIVE,
@@ -45,6 +46,11 @@ def get_active_landlord_subscription(user):
         .order_by("-created_at")
         .first()
     )
+    if sub and sub.expires_at and sub.expires_at <= now:
+        sub.status = LandlordSubscription.Status.EXPIRED
+        sub.save(update_fields=["status", "updated_at"])
+        return None
+    return sub
 
 
 def get_pending_landlord_subscription(user):
@@ -98,6 +104,75 @@ def activate_customer_premium(subscription):
     user.save(update_fields=["is_premium_customer", "premium_until"])
 
 
+def _count_landlord_listings(user):
+    from listings.models import Listing
+
+    return Listing.objects.filter(owner=user, is_active=True).count()
+
+
+def _count_premium_listings(user):
+    from listings.models import Listing
+
+    return Listing.objects.filter(owner=user, is_active=True, is_premium_post=True).count()
+
+
+def sync_landlord_usage_counters(sub):
+    """Sync usage counters from actual database listing counts."""
+    sub.posts_used = _count_landlord_listings(sub.user)
+    sub.premium_posts_used = _count_premium_listings(sub.user)
+    sub.save(update_fields=["posts_used", "premium_posts_used", "updated_at"])
+    return sub
+
+
+def get_landlord_usage(sub):
+    """
+    Return plan limits and usage from the database.
+    Limits come from subscription.plan; usage from active listings count.
+    """
+    plan = SubscriptionPlan.objects.get(pk=sub.plan_id)
+    posts_used = _count_landlord_listings(sub.user)
+    premium_used = _count_premium_listings(sub.user)
+
+    if sub.status == LandlordSubscription.Status.ACTIVE:
+        sub.posts_used = posts_used
+        sub.premium_posts_used = premium_used
+        sub.save(update_fields=["posts_used", "premium_posts_used", "updated_at"])
+    else:
+        sub.posts_used = posts_used
+        sub.premium_posts_used = premium_used
+
+    posts_remaining = max(0, plan.max_posts - posts_used)
+    premium_remaining = max(0, plan.max_premium_posts - premium_used)
+    approvals_remaining = max(0, plan.max_approvals - sub.approvals_used)
+    is_active = sub.status == LandlordSubscription.Status.ACTIVE
+
+    return {
+        "plan_id": str(plan.id),
+        "plan_name": plan.name,
+        "plan_type": plan.plan_type,
+        "subscription_status": sub.status,
+        "payment_status": sub.payment_status,
+        "max_posts": plan.max_posts,
+        "posts_used": posts_used,
+        "posts_remaining": posts_remaining,
+        "max_premium_posts": plan.max_premium_posts,
+        "premium_posts_used": premium_used,
+        "premium_posts_remaining": premium_remaining,
+        "max_approvals": plan.max_approvals,
+        "approvals_used": sub.approvals_used,
+        "approvals_remaining": approvals_remaining,
+        "can_post": is_active and posts_remaining > 0,
+        "can_create_premium_post": is_active and premium_remaining > 0,
+    }
+
+
+def get_landlord_usage_for_user(user):
+    sub = get_active_landlord_subscription(user)
+    if not sub:
+        return None
+    return get_landlord_usage(sub)
+
+
 def check_landlord_can_post(user, is_premium_post=False):
     """
     Validate landlord posting limits.
@@ -128,28 +203,38 @@ def check_landlord_can_post(user, is_premium_post=False):
             )
         return False, "No active subscription plan. Please select or renew your plan."
 
-    if sub.posts_used >= sub.plan.max_posts:
-        return False, f"Post limit reached ({sub.plan.max_posts} posts on {sub.plan.name} plan)."
+    usage = get_landlord_usage(sub)
+
+    if usage["posts_remaining"] <= 0:
+        return False, {
+            "detail": (
+                f"You have used all {usage['max_posts']} posts on your "
+                f"{usage['plan_name']} plan. Upgrade your plan to post more listings."
+            ),
+            "code": "post_limit_reached",
+            **usage,
+        }
 
     if is_premium_post:
-        if sub.premium_posts_used >= sub.plan.max_premium_posts:
-            return False, (
-                f"Premium post limit reached ({sub.plan.max_premium_posts} "
-                f"on {sub.plan.name} plan)."
-            )
+        if usage["premium_posts_remaining"] <= 0:
+            return False, {
+                "detail": (
+                    f"You have used all {usage['max_premium_posts']} premium posts on your "
+                    f"{usage['plan_name']} plan. Upgrade your plan for more premium listings."
+                ),
+                "code": "premium_post_limit_reached",
+                **usage,
+            }
 
-    return True, None
+    return True, usage
 
 
 def increment_landlord_usage(user, is_premium_post=False):
-    """Increment usage counters after successful listing creation."""
+    """Sync usage counters from actual listings after create/update."""
     sub = get_active_landlord_subscription(user)
     if not sub:
         return
-    sub.posts_used += 1
-    if is_premium_post:
-        sub.premium_posts_used += 1
-    sub.save(update_fields=["posts_used", "premium_posts_used", "updated_at"])
+    sync_landlord_usage_counters(sub)
 
 
 def increment_approval_usage(landlord):
@@ -166,10 +251,11 @@ def check_landlord_can_approve(landlord):
     sub = get_active_landlord_subscription(landlord)
     if not sub:
         return False, "No active subscription plan."
-    if sub.approvals_used >= sub.plan.max_approvals:
+    usage = get_landlord_usage(sub)
+    if usage["approvals_remaining"] <= 0:
         return False, (
-            f"Approval limit reached ({sub.plan.max_approvals} "
-            f"on {sub.plan.name} plan)."
+            f"Approval limit reached ({usage['approvals_used']} of {usage['max_approvals']} "
+            f"on {usage['plan_name']} plan)."
         )
     return True, None
 
@@ -236,6 +322,9 @@ def upgrade_landlord_plan(user, plan):
             LandlordSubscription.Status.PENDING,
         ],
     ).update(status=LandlordSubscription.Status.CANCELLED)
+
+    user.landlord_plan = plan
+    user.save(update_fields=["landlord_plan"])
 
     return create_landlord_subscription(user, plan)
 
