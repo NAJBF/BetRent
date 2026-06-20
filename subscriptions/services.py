@@ -11,6 +11,29 @@ from subscriptions.models import (
 )
 
 
+def ensure_landlord_subscription(user):
+    """
+    Ensure a landlord has a subscription record for their selected plan.
+    Fixes cases where plan was lost from cache after registration.
+    """
+    if not user.is_landlord or not user.landlord_plan_id:
+        return None
+
+    sub = get_active_landlord_subscription(user)
+    if sub:
+        return sub
+
+    pending = get_pending_landlord_subscription(user)
+    if pending:
+        return pending
+
+    plan = user.landlord_plan
+    if not plan or not plan.is_active:
+        return None
+
+    return create_landlord_subscription(user, plan)
+
+
 def get_active_landlord_subscription(user):
     """Return the landlord's current active subscription, if any."""
     return (
@@ -89,6 +112,20 @@ def check_landlord_can_post(user, is_premium_post=False):
 
     sub = get_active_landlord_subscription(user)
     if not sub:
+        ensure_landlord_subscription(user)
+        sub = get_active_landlord_subscription(user)
+    if not sub:
+        pending = get_pending_landlord_subscription(user)
+        if pending:
+            return False, (
+                "Your subscription payment is pending. "
+                "Complete payment and verify, or choose a free plan."
+            )
+        if user.landlord_plan_id:
+            return False, (
+                "Your subscription plan is not active yet. "
+                "Complete payment verification or contact support."
+            )
         return False, "No active subscription plan. Please select or renew your plan."
 
     if sub.posts_used >= sub.plan.max_posts:
@@ -176,6 +213,10 @@ def create_landlord_subscription(user, plan):
             else LandlordSubscription.PaymentStatus.PENDING
         ),
     )
+
+    if user.landlord_plan_id != plan.id:
+        user.landlord_plan = plan
+        user.save(update_fields=["landlord_plan"])
 
     if is_free:
         activate_landlord_subscription(subscription)

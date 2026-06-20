@@ -49,7 +49,7 @@ class UserAdmin(BaseUserAdmin, ModelAdmin):
             "classes": ["tab"],
             "fields": (
                 "role", "email_verified", "account_status",
-                "is_premium_customer", "premium_until",
+                "landlord_plan", "is_premium_customer", "premium_until",
                 "is_active", "is_staff", "is_superuser",
             ),
         }),

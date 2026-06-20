@@ -135,12 +135,23 @@ def _send_via_brevo(to_email, subject, body):
         with urllib.request.urlopen(request, timeout=20) as response:
             if response.status not in (200, 201):
                 raise RuntimeError(f"Brevo API returned status {response.status}")
+            raw = response.read().decode("utf-8", errors="replace")
+            try:
+                data = json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                data = {}
+            message_id = data.get("messageId")
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"Brevo API error ({exc.code}): {detail}") from exc
 
-    logger.info("OTP sent to %s via Brevo (from %s)", to_email, sender_email)
-    return True
+    logger.info(
+        "OTP queued via Brevo to %s from %s (messageId=%s)",
+        to_email,
+        sender_email,
+        message_id,
+    )
+    return message_id
 
 
 def _send_via_resend(to_email, subject, body):
@@ -199,8 +210,11 @@ def send_otp_email(email, purpose, otp, extra_context=None):
 
     if getattr(settings, "BREVO_API_KEY", "").strip():
         try:
-            _send_via_brevo(email, subject, body)
-            return {"sent": True, "via": "brevo", "error": None}
+            message_id = _send_via_brevo(email, subject, body)
+            result = {"sent": True, "via": "brevo", "error": None}
+            if message_id:
+                result["email_message_id"] = message_id
+            return result
         except Exception as exc:
             logger.error("Brevo failed for %s: %s", email, exc)
             return {"sent": False, "via": "brevo", "error": f"{type(exc).__name__}: {exc}"}

@@ -55,8 +55,12 @@ class RegisterSerializer(serializers.ModelSerializer):
             account_status=User.AccountStatus.PENDING_EMAIL,
         )
 
-        # Store selected plan_id in cache for post-verification plan selection
-        if plan_id and role == "landlord":
+        if plan_id and role == User.Role.LANDLORD:
+            from subscriptions.models import SubscriptionPlan
+            plan = SubscriptionPlan.objects.filter(id=plan_id, is_active=True).first()
+            if plan:
+                user.landlord_plan = plan
+                user.save(update_fields=["landlord_plan"])
             from django.core.cache import cache
             cache.set(f"pending_plan:{user.id}", str(plan_id), 86400)
 
@@ -138,6 +142,9 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
     can_post_listings = serializers.BooleanField(read_only=True)
     can_view_premium_listings = serializers.BooleanField(read_only=True)
+    plan_id = serializers.UUIDField(source="landlord_plan_id", read_only=True, allow_null=True)
+    plan_name = serializers.CharField(source="landlord_plan.name", read_only=True, allow_null=True)
+    plan_type = serializers.CharField(source="landlord_plan.plan_type", read_only=True, allow_null=True)
 
     class Meta:
         model = User
@@ -146,16 +153,18 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "avatar_url", "role", "is_active", "date_joined",
             "email_verified", "account_status", "is_premium_customer",
             "premium_until", "can_post_listings", "can_view_premium_listings",
+            "plan_id", "plan_name", "plan_type",
         ]
         read_only_fields = [
             "id", "email", "role", "is_active", "date_joined",
             "email_verified", "account_status", "is_premium_customer",
             "premium_until", "can_post_listings", "can_view_premium_listings",
+            "plan_id", "plan_name", "plan_type",
         ]
 
 
 class AdminUserSerializer(serializers.ModelSerializer):
-    """Admin view/update of any user — can change role and is_active."""
+    """Admin view/update of any user — can change role, plan, and premium status."""
 
     class Meta:
         model = User
@@ -163,6 +172,7 @@ class AdminUserSerializer(serializers.ModelSerializer):
             "id", "email", "full_name", "phone", "city", "bio",
             "avatar_url", "role", "is_active", "date_joined",
             "email_verified", "account_status", "is_premium_customer", "premium_until",
+            "landlord_plan",
         ]
         read_only_fields = ["id", "email", "date_joined"]
 

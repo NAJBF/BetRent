@@ -64,6 +64,9 @@ class RegisterView(generics.CreateAPIView):
             "account_status": user.account_status,
             "email_config": get_email_debug_info(),
         }
+        if user.role == "landlord" and user.landlord_plan_id:
+            payload["plan_id"] = str(user.landlord_plan_id)
+            payload["plan_name"] = plan_name or getattr(user.landlord_plan, "name", None)
 
         try:
             result = send_otp_email(
@@ -74,6 +77,8 @@ class RegisterView(generics.CreateAPIView):
             )
             payload["email_sent"] = result["sent"]
             payload["email_via"] = result.get("via")
+            if result.get("email_message_id"):
+                payload["email_message_id"] = result["email_message_id"]
             if result["sent"]:
                 payload["message"] = "Registration successful. Please check your email for the verification code."
             else:
@@ -129,7 +134,9 @@ class VerifyEmailView(APIView):
         from subscriptions.models import SubscriptionPlan
         from subscriptions.services import create_landlord_subscription
 
-        pending_plan_id = cache.get(f"pending_plan:{user.id}")
+        pending_plan_id = cache.get(f"pending_plan:{user.id}") or (
+            str(user.landlord_plan_id) if user.landlord_plan_id else None
+        )
         if pending_plan_id:
             try:
                 plan = SubscriptionPlan.objects.get(id=pending_plan_id, is_active=True)
@@ -142,6 +149,8 @@ class VerifyEmailView(APIView):
                         "message": "Email verified. Plan assigned.",
                         "email_verified": True,
                         "account_status": user.account_status,
+                        "plan_id": str(plan.id),
+                        "plan_name": plan.name,
                         "next_step": (
                             "login"
                             if user.account_status == User.AccountStatus.ACTIVE

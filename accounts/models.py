@@ -57,6 +57,14 @@ class User(AbstractUser):
     )
     is_premium_customer = models.BooleanField(default=False)
     premium_until = models.DateTimeField(null=True, blank=True)
+    landlord_plan = models.ForeignKey(
+        "subscriptions.SubscriptionPlan",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="landlord_users",
+        help_text="Selected subscription plan for landlord accounts.",
+    )
 
     objects = UserManager()
 

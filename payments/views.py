@@ -1,3 +1,4 @@
+from django.conf import settings
 from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -15,6 +16,23 @@ from .serializers import (
     VerifyTransactionRequestSerializer,
 )
 from bookings.models import Booking
+
+
+def validate_payment_app_token(request):
+    """Return error message if token missing/invalid, else None."""
+    expected = getattr(settings, "PAYMENT_APP_TOKEN", "").strip()
+    if not expected:
+        return "PAYMENT_APP_TOKEN is not configured on the server."
+
+    token = PaymentAppTokenAuthentication._extract_token(request)
+    if not token:
+        return (
+            "Missing app token. Send header X-App-Token, Authorization: Bearer <token>, "
+            "or include app_token in the JSON body."
+        )
+    if token != expected:
+        return "Invalid app token."
+    return None
 
 
 class PaymentInitiateView(APIView):
@@ -44,11 +62,11 @@ class ExternalPaymentRecordView(APIView):
     Auth: X-App-Token header OR app_token in JSON body (Swagger-friendly).
     """
 
-    authentication_classes = [PaymentAppTokenAuthentication]
+    authentication_classes = []
     permission_classes = [AllowAny]
 
     @extend_schema(
-        auth=["PaymentAppToken"],
+        auth=[],
         request=ExternalPaymentRecordSerializer,
         responses={
             201: ExternalPaymentRecordSerializer,
@@ -69,6 +87,10 @@ class ExternalPaymentRecordView(APIView):
         ],
     )
     def post(self, request):
+        token_error = validate_payment_app_token(request)
+        if token_error:
+            return Response({"detail": token_error}, status=status.HTTP_401_UNAUTHORIZED)
+
         serializer = ExternalPaymentRecordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         record = serializer.save()
