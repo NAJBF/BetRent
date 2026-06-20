@@ -4,7 +4,7 @@ import string
 
 from django.conf import settings
 from django.core.cache import cache
-from django.core.mail import send_mail
+from django.core.mail import EmailMessage, get_connection
 
 logger = logging.getLogger(__name__)
 
@@ -37,15 +37,21 @@ def verify_otp(email, purpose, code):
     return False
 
 
-def _is_smtp_configured():
-    return bool(getattr(settings, "EMAIL_HOST_USER", "") and getattr(settings, "EMAIL_HOST_PASSWORD", ""))
+def get_email_debug_info():
+    """Safe config summary for API responses (no password)."""
+    return {
+        "backend": settings.EMAIL_BACKEND,
+        "host": settings.EMAIL_HOST,
+        "port": settings.EMAIL_PORT,
+        "use_tls": getattr(settings, "EMAIL_USE_TLS", False),
+        "use_ssl": getattr(settings, "EMAIL_USE_SSL", False),
+        "user": settings.EMAIL_HOST_USER or None,
+        "from_email": settings.DEFAULT_FROM_EMAIL,
+        "password_set": bool(settings.EMAIL_HOST_PASSWORD),
+    }
 
 
-def send_otp_email(email, purpose, otp, extra_context=None):
-    """
-    Send OTP email. Never raises — registration/auth must not fail if mail is down.
-    Returns True if sent successfully, False otherwise.
-    """
+def _build_otp_message(purpose, otp, extra_context=None):
     extra_context = extra_context or {}
     plan_name = extra_context.get("plan_name", "")
     role = extra_context.get("role", "")
@@ -78,30 +84,110 @@ def send_otp_email(email, purpose, otp, extra_context=None):
         subject = "BetRent — Verification Code"
         body = f"Your verification code is: {otp}\n\nThis code expires in 10 minutes.\n"
 
+    return subject, body
+
+
+def _smtp_connection_options():
+    """Primary settings + Gmail fallback (465 SSL if 587 TLS fails, and vice versa)."""
+    host = settings.EMAIL_HOST
+    timeout = getattr(settings, "EMAIL_TIMEOUT", 8)
+
+    primary = {
+        "host": host,
+        "port": settings.EMAIL_PORT,
+        "use_tls": getattr(settings, "EMAIL_USE_TLS", False),
+        "use_ssl": getattr(settings, "EMAIL_USE_SSL", False),
+        "timeout": timeout,
+    }
+
+    options = [primary]
+
+    if host == "smtp.gmail.com":
+        if primary["port"] == 587:
+            options.append({
+                "host": host,
+                "port": 465,
+                "use_tls": False,
+                "use_ssl": True,
+                "timeout": timeout,
+            })
+        elif primary["port"] == 465:
+            options.append({
+                "host": host,
+                "port": 587,
+                "use_tls": True,
+                "use_ssl": False,
+                "timeout": timeout,
+            })
+
+    return options
+
+
+def _send_via_smtp(to_email, subject, body, smtp_opts):
     from_email = settings.DEFAULT_FROM_EMAIL
-
-    if not _is_smtp_configured():
-        logger.warning(
-            "SMTP not configured — OTP for %s (purpose=%s) not emailed. "
-            "Set EMAIL_HOST_USER and EMAIL_HOST_PASSWORD on the server.",
-            email,
-            purpose,
-        )
-        return False
-
+    connection = get_connection(
+        backend=settings.EMAIL_BACKEND,
+        host=smtp_opts["host"],
+        port=smtp_opts["port"],
+        username=settings.EMAIL_HOST_USER,
+        password=settings.EMAIL_HOST_PASSWORD,
+        use_tls=smtp_opts["use_tls"],
+        use_ssl=smtp_opts["use_ssl"],
+        timeout=smtp_opts["timeout"],
+        fail_silently=False,
+    )
+    connection.open()
     try:
-        sent = send_mail(
-            subject,
-            body,
-            from_email,
-            [email],
-            fail_silently=True,
-        )
-        if sent:
-            logger.info("OTP email sent to %s (purpose=%s)", email, purpose)
-            return True
-        logger.warning("OTP email not sent to %s (purpose=%s) — send_mail returned 0", email, purpose)
-        return False
-    except Exception as exc:
-        logger.error("Email send failed for %s (purpose=%s): %s", email, purpose, exc)
-        return False
+        msg = EmailMessage(subject, body, from_email, [to_email], connection=connection)
+        return msg.send()
+    finally:
+        connection.close()
+
+
+def send_otp_email(email, purpose, otp, extra_context=None):
+    """
+    Send OTP email. Tries SMTP with fallbacks.
+    Returns dict: {sent, via, error, debug_otp}
+    """
+    subject, body = _build_otp_message(purpose, otp, extra_context)
+
+    if settings.EMAIL_BACKEND.endswith("console.EmailBackend"):
+        logger.info("Console backend — OTP for %s: %s", email, otp)
+        return {
+            "sent": True,
+            "via": "console",
+            "error": None,
+            "debug_otp": otp if settings.DEBUG else None,
+        }
+
+    if not settings.EMAIL_HOST_USER or not settings.EMAIL_HOST_PASSWORD:
+        error = "EMAIL_HOST_USER or EMAIL_HOST_PASSWORD is missing."
+        if settings.DEBUG:
+            logger.warning("DEV OTP for %s: %s (%s)", email, otp, error)
+            return {"sent": True, "via": "debug", "error": error, "debug_otp": otp}
+        raise RuntimeError(f"{error} Config: {get_email_debug_info()}")
+
+    errors = []
+    for opts in _smtp_connection_options():
+        label = f"{opts['host']}:{opts['port']} tls={opts['use_tls']} ssl={opts['use_ssl']}"
+        try:
+            sent = _send_via_smtp(email, subject, body, opts)
+            if sent:
+                logger.info("OTP sent to %s via %s", email, label)
+                return {"sent": True, "via": label, "error": None, "debug_otp": None}
+            errors.append(f"{label}: send returned 0")
+        except Exception as exc:
+            errors.append(f"{label}: {type(exc).__name__}: {exc}")
+            logger.warning("SMTP attempt failed (%s): %s", label, exc)
+
+    combined = "; ".join(errors)
+    if settings.DEBUG:
+        logger.warning("SMTP failed for %s — DEV OTP: %s | Errors: %s", email, otp, combined)
+        return {
+            "sent": True,
+            "via": "debug",
+            "error": combined,
+            "debug_otp": otp,
+        }
+
+    raise RuntimeError(combined)

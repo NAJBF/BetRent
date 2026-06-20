@@ -17,5 +17,8 @@ uv run python manage.py collectstatic --no-input
 # Run migrations
 uv run python manage.py migrate
 
+# Database cache table for OTP when Redis is not configured
+uv run python manage.py createcachetable betrent_cache_table 2>/dev/null || true
+
 # Reset axes lockout records (clear any accumulated failed login attempts)
 uv run python manage.py axes_reset

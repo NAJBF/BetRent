@@ -4,9 +4,10 @@ from datetime import timedelta
 from dotenv import load_dotenv
 import dj_database_url
 
-load_dotenv()
-
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load .env from project root (must run after BASE_DIR is defined)
+load_dotenv(BASE_DIR / ".env", override=True)
 
 SECRET_KEY = os.environ.get("SECRET_KEY", "change-me-in-production")
 DEBUG = os.environ.get("DEBUG", "True") == "True"
@@ -114,22 +115,35 @@ if UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN:
     redis_host = UPSTASH_REDIS_REST_URL.replace("https://", "").replace("http://", "")
     REDIS_URL = f"rediss://default:{UPSTASH_REDIS_REST_TOKEN}@{redis_host}:6379"
 else:
-    REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/1")
+    REDIS_URL = os.getenv("REDIS_URL", "").strip()
 
-CACHES = {
-    "default": {
-        "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": REDIS_URL,
-        "OPTIONS": {
-            "CLIENT_CLASS": "django_redis.client.DefaultClient",
-            "SOCKET_CONNECT_TIMEOUT": 1,
-            "SOCKET_TIMEOUT": 1,
-            "IGNORE_EXCEPTIONS": True,
-        },
-        "KEY_PREFIX": "betrent",
-        "TIMEOUT": 300,
+# localhost Redis does not exist on Render/production — use DB cache instead
+if REDIS_URL and ("localhost" in REDIS_URL or "127.0.0.1" in REDIS_URL) and not DEBUG:
+    REDIS_URL = ""
+
+if REDIS_URL:
+    CACHES = {
+        "default": {
+            "BACKEND": "django_redis.cache.RedisCache",
+            "LOCATION": REDIS_URL,
+            "OPTIONS": {
+                "CLIENT_CLASS": "django_redis.client.DefaultClient",
+                "SOCKET_CONNECT_TIMEOUT": 5,
+                "SOCKET_TIMEOUT": 5,
+                "IGNORE_EXCEPTIONS": True,
+            },
+            "KEY_PREFIX": "betrent",
+            "TIMEOUT": 300,
+        }
     }
-}
+else:
+    # Render/single-server fallback — OTP stored in DB (run: manage.py createcachetable)
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+            "LOCATION": "betrent_cache_table",
+        }
+    }
 
 # ---------------------------------------------------------------------------
 # Static & Media
@@ -369,22 +383,38 @@ PAYMENT_APP_TOKEN = os.environ.get("PAYMENT_APP_TOKEN", "")
 # ---------------------------------------------------------------------------
 # Email Configuration (OTP verification — set credentials in .env)
 # ---------------------------------------------------------------------------
-EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
-EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+def _env(key, default=""):
+    """Read env var and strip whitespace/quotes."""
+    value = os.environ.get(key, default)
+    if value is None:
+        return default
+    return str(value).strip().strip('"').strip("'")
 
-# Use SMTP only when credentials are present; otherwise console (no crash on register)
-if os.environ.get("EMAIL_BACKEND"):
-    EMAIL_BACKEND = os.environ.get("EMAIL_BACKEND")
+
+EMAIL_HOST_USER = _env("EMAIL_HOST_USER")
+EMAIL_HOST_PASSWORD = _env("EMAIL_HOST_PASSWORD").replace(" ", "")
+
+_EMAIL_BACKEND_RAW = _env("EMAIL_BACKEND")
+_EMAIL_BACKEND_ALIASES = {
+    "smtp": "django.core.mail.backends.smtp.EmailBackend",
+    "console": "django.core.mail.backends.console.EmailBackend",
+}
+
+if _EMAIL_BACKEND_RAW in _EMAIL_BACKEND_ALIASES:
+    EMAIL_BACKEND = _EMAIL_BACKEND_ALIASES[_EMAIL_BACKEND_RAW]
+elif _EMAIL_BACKEND_RAW:
+    EMAIL_BACKEND = _EMAIL_BACKEND_RAW
 elif EMAIL_HOST_USER and EMAIL_HOST_PASSWORD:
     EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 else:
     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
-EMAIL_HOST = os.environ.get("EMAIL_HOST", "smtp.gmail.com")
-EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
-EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True") == "True"
-EMAIL_TIMEOUT = int(os.environ.get("EMAIL_TIMEOUT", "10"))
-DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "BetRent <noreply@betrent.et>")
+EMAIL_HOST = _env("EMAIL_HOST", "smtp.gmail.com")
+EMAIL_PORT = int(_env("EMAIL_PORT", "587"))
+EMAIL_USE_TLS = _env("EMAIL_USE_TLS", "True").lower() in ("true", "1", "yes")
+EMAIL_USE_SSL = _env("EMAIL_USE_SSL", "False").lower() in ("true", "1", "yes")
+EMAIL_TIMEOUT = int(_env("EMAIL_TIMEOUT", "8"))
+DEFAULT_FROM_EMAIL = _env("DEFAULT_FROM_EMAIL") or EMAIL_HOST_USER or "BetRent <noreply@betrent.et>"
 
 # ---------------------------------------------------------------------------
 # Featured Listing Promotion Pricing (ETB)

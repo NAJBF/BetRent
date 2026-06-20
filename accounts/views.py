@@ -2,10 +2,11 @@ from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from django.conf import settings
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema
 
-from core.email_service import send_otp_email, store_otp, verify_otp
+from core.email_service import get_email_debug_info, send_otp_email, store_otp, verify_otp
 from core.permissions import IsAdminRole
 from core.pagination import BetRentPagination
 from .models import User
@@ -53,33 +54,43 @@ class RegisterView(generics.CreateAPIView):
                 pass
 
         otp = store_otp(user.email, "register")
-        email_sent = send_otp_email(
-            user.email,
-            "register",
-            otp,
-            extra_context={"plan_name": plan_name, "role": user.role},
-        )
 
-        message = (
-            "Registration successful. Please check your email for the verification code."
-            if email_sent
-            else "Registration successful. We could not send the verification email right now. "
-            "Please use Resend OTP or try again shortly."
-        )
+        payload = {
+            "id": str(user.id),
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+            "email_verified": user.email_verified,
+            "account_status": user.account_status,
+            "email_config": get_email_debug_info(),
+        }
 
-        return Response(
-            {
-                "id": str(user.id),
-                "email": user.email,
-                "full_name": user.full_name,
-                "role": user.role,
-                "email_verified": user.email_verified,
-                "account_status": user.account_status,
-                "email_sent": email_sent,
-                "message": message,
-            },
-            status=status.HTTP_201_CREATED,
-        )
+        try:
+            result = send_otp_email(
+                user.email,
+                "register",
+                otp,
+                extra_context={"plan_name": plan_name, "role": user.role},
+            )
+            payload["email_sent"] = result["sent"]
+            payload["email_via"] = result.get("via")
+            if result.get("debug_otp"):
+                payload["debug_otp"] = result["debug_otp"]
+            if result.get("error") and result.get("via") == "debug":
+                payload["email_error"] = result["error"]
+                payload["message"] = (
+                    "Registration successful. SMTP failed locally — use debug_otp below or check server logs."
+                )
+            else:
+                payload["message"] = "Registration successful. Please check your email for the verification code."
+        except Exception as exc:
+            payload["email_sent"] = False
+            payload["email_error"] = f"{type(exc).__name__}: {exc}"
+            payload["message"] = "Registration successful but email could not be sent."
+            if settings.DEBUG:
+                payload["debug_otp"] = otp
+
+        return Response(payload, status=status.HTTP_201_CREATED)
 
 
 class VerifyEmailView(APIView):
@@ -187,16 +198,22 @@ class ResendOTPView(APIView):
             return Response({"detail": "Email is already verified."}, status=status.HTTP_400_BAD_REQUEST)
 
         otp = store_otp(email, purpose)
-        email_sent = send_otp_email(email, purpose, otp, extra_context={"role": user.role})
-        if email_sent:
-            return Response({"message": "A new verification code has been sent to your email.", "email_sent": True})
-        return Response(
-            {
-                "message": "Could not send email right now. Please try again in a few minutes.",
+        try:
+            result = send_otp_email(email, purpose, otp, extra_context={"role": user.role})
+            resp = {"message": "A new verification code has been sent.", "email_sent": result["sent"], "email_via": result.get("via")}
+            if result.get("debug_otp"):
+                resp["debug_otp"] = result["debug_otp"]
+            return Response(resp)
+        except Exception as exc:
+            payload = {
+                "message": "Could not send email.",
                 "email_sent": False,
-            },
-            status=status.HTTP_503_SERVICE_UNAVAILABLE,
-        )
+                "email_error": f"{type(exc).__name__}: {exc}",
+                "email_config": get_email_debug_info(),
+            }
+            if settings.DEBUG:
+                payload["debug_otp"] = otp
+            return Response(payload, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
 
 class ForgotPasswordView(APIView):
@@ -216,17 +233,19 @@ class ForgotPasswordView(APIView):
             return Response({"message": "If the email exists, a reset code has been sent."})
 
         otp = store_otp(email, "reset_password")
-        email_sent = send_otp_email(email, "reset_password", otp)
-        return Response(
-            {
-                "message": (
-                    "If the email exists, a reset code has been sent."
-                    if email_sent
-                    else "If the email exists, we could not send the reset code right now. Try again shortly."
-                ),
-                "email_sent": email_sent,
-            }
-        )
+        try:
+            send_otp_email(email, "reset_password", otp)
+            return Response({"message": "If the email exists, a reset code has been sent.", "email_sent": True})
+        except Exception as exc:
+            return Response(
+                {
+                    "message": "Could not send reset email.",
+                    "email_sent": False,
+                    "email_error": f"{type(exc).__name__}: {exc}",
+                    "email_config": get_email_debug_info(),
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
 
 class ResetPasswordView(APIView):
