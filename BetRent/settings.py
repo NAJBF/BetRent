@@ -204,7 +204,8 @@ SPECTACULAR_SETTINGS = {
                 "in": "header",
                 "name": "X-App-Token",
                 "description": (
-                    "Static token for POST /payments/external/record/. "
+                    "Static token for POST /payments/external/ "
+                    "(header X-App-Token or body field app_token). "
                     "Must match server PAYMENT_APP_TOKEN."
                 ),
             },
@@ -433,6 +434,15 @@ EMAIL_USE_TLS = _env("EMAIL_USE_TLS", "True").lower() in ("true", "1", "yes")
 EMAIL_USE_SSL = _env("EMAIL_USE_SSL", "False").lower() in ("true", "1", "yes")
 EMAIL_TIMEOUT = int(_env("EMAIL_TIMEOUT", "8"))
 DEFAULT_FROM_EMAIL = _env("DEFAULT_FROM_EMAIL") or EMAIL_HOST_USER or "BetRent <noreply@betrent.et>"
+
+# Brevo — send from your Gmail to any user (no domain). Verify Gmail once at brevo.com
+BREVO_API_KEY = _env("BREVO_API_KEY")
+BREVO_SENDER_EMAIL = _env("BREVO_SENDER_EMAIL") or EMAIL_HOST_USER
+BREVO_SENDER_NAME = _env("BREVO_SENDER_NAME", "BetRent")
+
+# Resend — optional fallback (requires verified domain)
+RESEND_API_KEY = _env("RESEND_API_KEY")
+RESEND_FROM_EMAIL = _env("RESEND_FROM_EMAIL") or DEFAULT_FROM_EMAIL
 
 # ---------------------------------------------------------------------------
 # Featured Listing Promotion Pricing (ETB)

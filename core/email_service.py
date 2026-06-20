@@ -1,6 +1,9 @@
+import json
 import logging
 import random
 import string
+import urllib.error
+import urllib.request
 
 from django.conf import settings
 from django.core.cache import cache
@@ -21,14 +24,12 @@ def _otp_cache_key(purpose, email):
 
 
 def store_otp(email, purpose):
-    """Generate and store OTP in cache. Returns the OTP code."""
     otp = _generate_otp()
     cache.set(_otp_cache_key(purpose, email), otp, OTP_TTL)
     return otp
 
 
 def verify_otp(email, purpose, code):
-    """Verify OTP and delete on success."""
     key = _otp_cache_key(purpose, email)
     stored = cache.get(key)
     if stored and stored == code:
@@ -37,17 +38,31 @@ def verify_otp(email, purpose, code):
     return False
 
 
+def _active_provider():
+    if getattr(settings, "BREVO_API_KEY", "").strip():
+        return "brevo"
+    if getattr(settings, "RESEND_API_KEY", "").strip():
+        return "resend"
+    if settings.EMAIL_HOST_USER and settings.EMAIL_HOST_PASSWORD:
+        return "smtp"
+    return "none"
+
+
 def get_email_debug_info():
-    """Safe config summary for API responses (no password)."""
     return {
-        "backend": settings.EMAIL_BACKEND,
-        "host": settings.EMAIL_HOST,
-        "port": settings.EMAIL_PORT,
-        "use_tls": getattr(settings, "EMAIL_USE_TLS", False),
-        "use_ssl": getattr(settings, "EMAIL_USE_SSL", False),
-        "user": settings.EMAIL_HOST_USER or None,
-        "from_email": settings.DEFAULT_FROM_EMAIL,
-        "password_set": bool(settings.EMAIL_HOST_PASSWORD),
+        "provider": _active_provider(),
+        "brevo_configured": bool(getattr(settings, "BREVO_API_KEY", "")),
+        "brevo_sender": getattr(settings, "BREVO_SENDER_EMAIL", None),
+        "resend_configured": bool(getattr(settings, "RESEND_API_KEY", "")),
+        "from_email": (
+            getattr(settings, "BREVO_SENDER_EMAIL", None)
+            or getattr(settings, "RESEND_FROM_EMAIL", None)
+            or settings.DEFAULT_FROM_EMAIL
+        ),
+        "smtp_host": settings.EMAIL_HOST,
+        "smtp_port": settings.EMAIL_PORT,
+        "smtp_user": settings.EMAIL_HOST_USER or None,
+        "smtp_password_set": bool(settings.EMAIL_HOST_PASSWORD),
     }
 
 
@@ -87,53 +102,83 @@ def _build_otp_message(purpose, otp, extra_context=None):
     return subject, body
 
 
-def _smtp_connection_options():
-    """Primary settings + Gmail fallback (465 SSL if 587 TLS fails, and vice versa)."""
-    host = settings.EMAIL_HOST
-    timeout = getattr(settings, "EMAIL_TIMEOUT", 8)
+def _send_via_brevo(to_email, subject, body):
+    api_key = getattr(settings, "BREVO_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("BREVO_API_KEY is not configured.")
 
-    primary = {
-        "host": host,
-        "port": settings.EMAIL_PORT,
-        "use_tls": getattr(settings, "EMAIL_USE_TLS", False),
-        "use_ssl": getattr(settings, "EMAIL_USE_SSL", False),
-        "timeout": timeout,
-    }
+    sender_email = getattr(settings, "BREVO_SENDER_EMAIL", "").strip()
+    if not sender_email:
+        raise RuntimeError("BREVO_SENDER_EMAIL is not configured.")
 
-    options = [primary]
+    sender_name = getattr(settings, "BREVO_SENDER_NAME", "BetRent").strip() or "BetRent"
+    payload = json.dumps({
+        "sender": {"name": sender_name, "email": sender_email},
+        "to": [{"email": to_email}],
+        "subject": subject,
+        "textContent": body,
+        "htmlContent": f"<pre style='font-family:sans-serif;font-size:16px'>{body}</pre>",
+    }).encode("utf-8")
 
-    if host == "smtp.gmail.com":
-        if primary["port"] == 587:
-            options.append({
-                "host": host,
-                "port": 465,
-                "use_tls": False,
-                "use_ssl": True,
-                "timeout": timeout,
-            })
-        elif primary["port"] == 465:
-            options.append({
-                "host": host,
-                "port": 587,
-                "use_tls": True,
-                "use_ssl": False,
-                "timeout": timeout,
-            })
+    request = urllib.request.Request(
+        "https://api.brevo.com/v3/smtp/email",
+        data=payload,
+        headers={
+            "api-key": api_key,
+            "Content-Type": "application/json",
+            "accept": "application/json",
+        },
+        method="POST",
+    )
 
-    return options
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            if response.status not in (200, 201):
+                raise RuntimeError(f"Brevo API returned status {response.status}")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Brevo API error ({exc.code}): {detail}") from exc
+
+    logger.info("OTP sent to %s via Brevo (from %s)", to_email, sender_email)
+    return True
 
 
-def _send_via_smtp(to_email, subject, body, smtp_opts):
+def _send_via_resend(to_email, subject, body):
+    import resend
+
+    api_key = getattr(settings, "RESEND_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("RESEND_API_KEY is not configured.")
+
+    from_email = (
+        getattr(settings, "RESEND_FROM_EMAIL", "").strip()
+        or settings.DEFAULT_FROM_EMAIL
+    )
+
+    resend.api_key = api_key
+    resend.Emails.send({
+        "from": from_email,
+        "to": to_email,
+        "subject": subject,
+        "text": body,
+        "html": f"<pre style='font-family:sans-serif;font-size:16px'>{body}</pre>",
+    })
+
+    logger.info("OTP sent to %s via Resend", to_email)
+    return True
+
+
+def _send_via_smtp(to_email, subject, body):
     from_email = settings.DEFAULT_FROM_EMAIL
     connection = get_connection(
         backend=settings.EMAIL_BACKEND,
-        host=smtp_opts["host"],
-        port=smtp_opts["port"],
+        host=settings.EMAIL_HOST,
+        port=settings.EMAIL_PORT,
         username=settings.EMAIL_HOST_USER,
         password=settings.EMAIL_HOST_PASSWORD,
-        use_tls=smtp_opts["use_tls"],
-        use_ssl=smtp_opts["use_ssl"],
-        timeout=smtp_opts["timeout"],
+        use_tls=getattr(settings, "EMAIL_USE_TLS", False),
+        use_ssl=getattr(settings, "EMAIL_USE_SSL", False),
+        timeout=getattr(settings, "EMAIL_TIMEOUT", 15),
         fail_silently=False,
     )
     connection.open()
@@ -146,48 +191,44 @@ def _send_via_smtp(to_email, subject, body, smtp_opts):
 
 def send_otp_email(email, purpose, otp, extra_context=None):
     """
-    Send OTP email. Tries SMTP with fallbacks.
-    Returns dict: {sent, via, error, debug_otp}
+    Send OTP email.
+    Priority: Brevo (Gmail sender, works on Render) -> SMTP -> Resend.
+    Returns: {sent, via, error}
     """
     subject, body = _build_otp_message(purpose, otp, extra_context)
 
-    if settings.EMAIL_BACKEND.endswith("console.EmailBackend"):
-        logger.info("Console backend — OTP for %s: %s", email, otp)
-        return {
-            "sent": True,
-            "via": "console",
-            "error": None,
-            "debug_otp": otp if settings.DEBUG else None,
-        }
-
-    if not settings.EMAIL_HOST_USER or not settings.EMAIL_HOST_PASSWORD:
-        error = "EMAIL_HOST_USER or EMAIL_HOST_PASSWORD is missing."
-        if settings.DEBUG:
-            logger.warning("DEV OTP for %s: %s (%s)", email, otp, error)
-            return {"sent": True, "via": "debug", "error": error, "debug_otp": otp}
-        raise RuntimeError(f"{error} Config: {get_email_debug_info()}")
-
-    errors = []
-    for opts in _smtp_connection_options():
-        label = f"{opts['host']}:{opts['port']} tls={opts['use_tls']} ssl={opts['use_ssl']}"
+    if getattr(settings, "BREVO_API_KEY", "").strip():
         try:
-            sent = _send_via_smtp(email, subject, body, opts)
-            if sent:
-                logger.info("OTP sent to %s via %s", email, label)
-                return {"sent": True, "via": label, "error": None, "debug_otp": None}
-            errors.append(f"{label}: send returned 0")
+            _send_via_brevo(email, subject, body)
+            return {"sent": True, "via": "brevo", "error": None}
         except Exception as exc:
-            errors.append(f"{label}: {type(exc).__name__}: {exc}")
-            logger.warning("SMTP attempt failed (%s): %s", label, exc)
+            logger.error("Brevo failed for %s: %s", email, exc)
+            return {"sent": False, "via": "brevo", "error": f"{type(exc).__name__}: {exc}"}
 
-    combined = "; ".join(errors)
-    if settings.DEBUG:
-        logger.warning("SMTP failed for %s — DEV OTP: %s | Errors: %s", email, otp, combined)
-        return {
-            "sent": True,
-            "via": "debug",
-            "error": combined,
-            "debug_otp": otp,
-        }
+    if settings.EMAIL_HOST_USER and settings.EMAIL_HOST_PASSWORD:
+        if not settings.EMAIL_BACKEND.endswith("console.EmailBackend"):
+            try:
+                sent = _send_via_smtp(email, subject, body)
+                if sent:
+                    return {"sent": True, "via": "smtp", "error": None}
+                return {"sent": False, "via": "smtp", "error": "SMTP send returned 0"}
+            except Exception as exc:
+                logger.error("SMTP failed for %s: %s", email, exc)
+                return {"sent": False, "via": "smtp", "error": f"{type(exc).__name__}: {exc}"}
 
-    raise RuntimeError(combined)
+    if getattr(settings, "RESEND_API_KEY", "").strip():
+        try:
+            _send_via_resend(email, subject, body)
+            return {"sent": True, "via": "resend", "error": None}
+        except Exception as exc:
+            logger.error("Resend failed for %s: %s", email, exc)
+            return {"sent": False, "via": "resend", "error": f"{type(exc).__name__}: {exc}"}
+
+    return {
+        "sent": False,
+        "via": "none",
+        "error": (
+            "No email provider configured. Use Brevo with your Gmail "
+            "(brevo.com — verify sender, no domain needed) or set SMTP for local dev."
+        ),
+    }

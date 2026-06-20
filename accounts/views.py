@@ -74,21 +74,15 @@ class RegisterView(generics.CreateAPIView):
             )
             payload["email_sent"] = result["sent"]
             payload["email_via"] = result.get("via")
-            if result.get("debug_otp"):
-                payload["debug_otp"] = result["debug_otp"]
-            if result.get("error") and result.get("via") == "debug":
-                payload["email_error"] = result["error"]
-                payload["message"] = (
-                    "Registration successful. SMTP failed locally — use debug_otp below or check server logs."
-                )
-            else:
+            if result["sent"]:
                 payload["message"] = "Registration successful. Please check your email for the verification code."
+            else:
+                payload["email_error"] = result.get("error")
+                payload["message"] = "Registration successful but email could not be sent."
         except Exception as exc:
             payload["email_sent"] = False
             payload["email_error"] = f"{type(exc).__name__}: {exc}"
             payload["message"] = "Registration successful but email could not be sent."
-            if settings.DEBUG:
-                payload["debug_otp"] = otp
 
         return Response(payload, status=status.HTTP_201_CREATED)
 
@@ -198,22 +192,22 @@ class ResendOTPView(APIView):
             return Response({"detail": "Email is already verified."}, status=status.HTTP_400_BAD_REQUEST)
 
         otp = store_otp(email, purpose)
-        try:
-            result = send_otp_email(email, purpose, otp, extra_context={"role": user.role})
-            resp = {"message": "A new verification code has been sent.", "email_sent": result["sent"], "email_via": result.get("via")}
-            if result.get("debug_otp"):
-                resp["debug_otp"] = result["debug_otp"]
-            return Response(resp)
-        except Exception as exc:
-            payload = {
+        result = send_otp_email(email, purpose, otp, extra_context={"role": user.role})
+        if result["sent"]:
+            return Response({
+                "message": "A new verification code has been sent.",
+                "email_sent": True,
+                "email_via": result.get("via"),
+            })
+        return Response(
+            {
                 "message": "Could not send email.",
                 "email_sent": False,
-                "email_error": f"{type(exc).__name__}: {exc}",
+                "email_error": result.get("error"),
                 "email_config": get_email_debug_info(),
-            }
-            if settings.DEBUG:
-                payload["debug_otp"] = otp
-            return Response(payload, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            },
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
 
 class ForgotPasswordView(APIView):
@@ -233,19 +227,18 @@ class ForgotPasswordView(APIView):
             return Response({"message": "If the email exists, a reset code has been sent."})
 
         otp = store_otp(email, "reset_password")
-        try:
-            send_otp_email(email, "reset_password", otp)
+        result = send_otp_email(email, "reset_password", otp)
+        if result["sent"]:
             return Response({"message": "If the email exists, a reset code has been sent.", "email_sent": True})
-        except Exception as exc:
-            return Response(
-                {
-                    "message": "Could not send reset email.",
-                    "email_sent": False,
-                    "email_error": f"{type(exc).__name__}: {exc}",
-                    "email_config": get_email_debug_info(),
-                },
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
+        return Response(
+            {
+                "message": "Could not send reset email.",
+                "email_sent": False,
+                "email_error": result.get("error"),
+                "email_config": get_email_debug_info(),
+            },
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
 
 class ResetPasswordView(APIView):

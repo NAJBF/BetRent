@@ -37,9 +37,11 @@ class PaymentInitiateView(APIView):
 
 class ExternalPaymentRecordView(APIView):
     """
-    POST /api/v1/payments/external/record/
+    POST /api/v1/payments/external/
+    POST /api/v1/payments/external/record/  (same handler)
+
     External payment system submits transaction details here.
-    Auth: X-App-Token header (same value as PAYMENT_APP_TOKEN on server).
+    Auth: X-App-Token header OR app_token in JSON body (Swagger-friendly).
     """
 
     authentication_classes = [PaymentAppTokenAuthentication]
@@ -50,12 +52,13 @@ class ExternalPaymentRecordView(APIView):
         request=ExternalPaymentRecordSerializer,
         responses={
             201: ExternalPaymentRecordSerializer,
-            401: OpenApiResponse(description="Missing or invalid X-App-Token"),
+            401: OpenApiResponse(description="Missing or invalid app token"),
         },
         examples=[
             OpenApiExample(
                 "Record completed landlord payment",
                 value={
+                    "app_token": "betrent-external-token-2026",
                     "transaction_id": "LSUB-ABC123DEF456",
                     "payer_name": "John Landlord",
                     "payment_status": "completed",

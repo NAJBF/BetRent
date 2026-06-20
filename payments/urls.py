@@ -15,6 +15,8 @@ urlpatterns = [
     path("booking/<uuid:booking_id>/", BookingPaymentView.as_view(), name="booking-payment"),
     path("webhook/chapa/", ChapaWebhookView.as_view(), name="chapa-webhook"),
     path("<uuid:payment_id>/manual-update/", PaymentManualUpdateView.as_view(), name="payment-manual-update"),
+    # /external/ and /external/record/ are the same endpoint (record payment from backup gateway)
+    path("external/", ExternalPaymentRecordView.as_view(), name="external-payment"),
     path("external/record/", ExternalPaymentRecordView.as_view(), name="external-payment-record"),
     path("external/verify/", ExternalPaymentVerifyView.as_view(), name="external-payment-verify"),
 ]

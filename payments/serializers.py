@@ -44,6 +44,14 @@ class ChapaWebhookSerializer(serializers.Serializer):
 class ExternalPaymentRecordSerializer(serializers.ModelSerializer):
     """Incoming payment record from external payment system."""
 
+    app_token = serializers.CharField(
+        write_only=True,
+        required=False,
+        help_text=(
+            "Same value as PAYMENT_APP_TOKEN on the server. "
+            "You can send this in the body (Swagger) or use the X-App-Token header."
+        ),
+    )
     transaction_id = serializers.CharField(max_length=100)
     payer_name = serializers.CharField(max_length=255)
     payment_status = serializers.ChoiceField(choices=ExternalPaymentRecord.Status.choices)
@@ -52,6 +60,7 @@ class ExternalPaymentRecordSerializer(serializers.ModelSerializer):
     class Meta:
         model = ExternalPaymentRecord
         fields = [
+            "app_token",
             "id",
             "transaction_id",
             "payer_name",
@@ -61,6 +70,10 @@ class ExternalPaymentRecordSerializer(serializers.ModelSerializer):
             "created_at",
         ]
         read_only_fields = ["id", "processed", "created_at"]
+
+    def validate(self, attrs):
+        attrs.pop("app_token", None)
+        return attrs
 
     def create(self, validated_data):
         transaction_id = validated_data["transaction_id"]

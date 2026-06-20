@@ -1,3 +1,5 @@
+import json
+
 from django.conf import settings
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed
@@ -53,4 +55,19 @@ class PaymentAppTokenAuthentication(BaseAuthentication):
             return auth[7:].strip()
         if auth.startswith("Token "):
             return auth[6:].strip()
+
+        # Swagger / JSON body: { "app_token": "..." } (parsed before auth in APIView.post,
+        # but authenticate() runs earlier — read raw JSON when needed)
+        try:
+            data = getattr(request, "data", None)
+            if isinstance(data, dict) and data.get("app_token"):
+                return str(data["app_token"]).strip()
+            content_type = request.content_type or ""
+            if "json" in content_type and request.body:
+                body = json.loads(request.body.decode("utf-8"))
+                if isinstance(body, dict) and body.get("app_token"):
+                    return str(body["app_token"]).strip()
+        except (json.JSONDecodeError, UnicodeDecodeError, AttributeError, TypeError):
+            pass
+
         return None
