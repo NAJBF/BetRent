@@ -1,51 +1,257 @@
 {% extends "admin/base_site.html" %}
 
 {% block content %}
-<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 2rem;">
-  <div style="background: #1e1e2e; padding: 1.5rem; border-radius: 8px; border: 1px solid #333;">
-    <h3 style="margin: 0 0 0.5rem; color: #a78bfa;">Total Income</h3>
-    <p style="font-size: 1.8rem; font-weight: bold; margin: 0;">{{ total_income|floatformat:2 }} ETB</p>
+<style>
+  /* ── Theme-aware variables ── */
+  :root {
+    --dash-bg: #ffffff;
+    --dash-border: rgba(249, 115, 22, 0.4);
+    --dash-shadow: rgba(0, 0, 0, 0.08);
+    --dash-text: #000000; /* Pure black, NO GREY */
+    --dash-muted: #9a3412; /* Dark orange/brown, NO GREY */
+    --dash-table-border: rgba(249, 115, 22, 0.3);
+    --dash-table-hover: rgba(249, 115, 22, 0.08);
+    --dash-table-head-bg: rgba(249, 115, 22, 0.1);
+    --dash-heading: #c2410c; /* Strong orange */
+  }
+
+  /* Dark theme (Unfold uses .dark class on <html>) */
+  html.dark :root, .dark {
+    --dash-bg: rgba(30, 30, 30, 0.70);
+    --dash-border: rgba(251, 146, 60, 0.30);
+    --dash-shadow: rgba(0, 0, 0, 0.3);
+    --dash-text: #ffffff;
+    --dash-muted: #fdba74; /* Light orange */
+    --dash-table-border: rgba(251, 146, 60, 0.25);
+    --dash-table-hover: rgba(251, 146, 60, 0.12);
+    --dash-table-head-bg: rgba(251, 146, 60, 0.15);
+    --dash-heading: #fb923c;
+  }
+
+  /* Fallback for browsers using prefers-color-scheme */
+  @media (prefers-color-scheme: dark) {
+    :root:not(.light) {
+      --dash-bg: rgba(30, 30, 30, 0.70);
+      --dash-border: rgba(251, 146, 60, 0.30);
+      --dash-shadow: rgba(0, 0, 0, 0.3);
+      --dash-text: #ffffff;
+      --dash-muted: #fdba74;
+      --dash-table-border: rgba(251, 146, 60, 0.25);
+      --dash-table-hover: rgba(251, 146, 60, 0.12);
+      --dash-table-head-bg: rgba(251, 146, 60, 0.15);
+      --dash-heading: #fb923c;
+    }
+  }
+
+  /* ── Card Grid ── */
+  .dash-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 1.25rem;
+    margin-bottom: 2.5rem;
+  }
+
+  /* ── Glass Card ── */
+  .dash-card {
+    position: relative;
+    overflow: hidden;
+    background: var(--dash-bg) !important;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--dash-border) !important;
+    border-radius: 14px;
+    padding: 1.6rem 1.5rem 1.4rem;
+    box-shadow: 0 4px 24px var(--dash-shadow) !important;
+    transition: transform 0.22s ease, box-shadow 0.22s ease;
+    color: var(--dash-text) !important;
+  }
+  .dash-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 32px var(--dash-shadow) !important;
+  }
+
+  /* Orange gradient glow strip at top of each card */
+  .dash-card::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #f97316, #fb923c, #fdba74) !important;
+    border-radius: 14px 14px 0 0;
+  }
+
+  /* Hero card (Total Income) gets a full gradient bg */
+  .dash-card--hero {
+    background: linear-gradient(135deg, rgba(249,115,22,0.18) 0%, rgba(251,146,60,0.10) 100%),
+                var(--dash-bg) !important;
+  }
+  .dash-card--hero::before {
+    height: 5px;
+    background: linear-gradient(90deg, #ea580c, #f97316, #fb923c, #fdba74) !important;
+  }
+
+  .dash-card__label {
+    font-size: 0.82rem;
+    font-weight: 800 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--dash-muted) !important;
+    margin: 0 0 0.55rem;
+  }
+  .dash-card__value {
+    font-size: 1.5rem;
+    font-weight: 800 !important;
+    margin: 0;
+    line-height: 1.2;
+    color: var(--dash-text) !important;
+  }
+  .dash-card--hero .dash-card__value {
+    font-size: 2rem;
+    background: linear-gradient(135deg, #ea580c, #f97316) !important;
+    -webkit-background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
+    background-clip: text !important;
+  }
+  .dash-card__currency {
+    font-size: 0.85rem;
+    font-weight: 800 !important;
+    color: var(--dash-muted) !important;
+    margin-left: 0.25rem;
+  }
+  .dash-card--hero .dash-card__currency {
+    background: linear-gradient(135deg, #ea580c, #f97316) !important;
+    -webkit-background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
+    background-clip: text !important;
+  }
+
+  /* ── Decorative icon in card corner ── */
+  .dash-card__icon {
+    position: absolute;
+    top: 1.2rem;
+    right: 1.2rem;
+    font-size: 1.6rem;
+    opacity: 0.8;
+  }
+
+  /* ── Table ── */
+  .dash-section-title {
+    font-size: 1.15rem;
+    font-weight: 800 !important;
+    color: var(--dash-heading) !important;
+    margin: 0 0 1rem;
+  }
+
+  .dash-table {
+    width: 100%;
+    border-collapse: collapse;
+    color: var(--dash-text) !important;
+    font-size: 0.9rem;
+  }
+  .dash-table thead tr {
+    background: var(--dash-table-head-bg) !important;
+  }
+  .dash-table th {
+    text-align: left;
+    padding: 0.85rem 0.75rem;
+    font-weight: 800 !important;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--dash-heading) !important; /* NO GREY */
+    border-bottom: 2px solid var(--dash-table-border) !important;
+  }
+  .dash-table th:nth-child(4) { text-align: right; }
+  .dash-table td {
+    padding: 0.85rem 0.75rem;
+    border-bottom: 1px solid var(--dash-table-border) !important;
+    color: var(--dash-text) !important; /* FORCE BLACK TEXT */
+    font-weight: 500;
+  }
+  .dash-table td:nth-child(4) {
+    text-align: right;
+    font-weight: 800 !important;
+    font-variant-numeric: tabular-nums;
+  }
+  .dash-table tbody tr {
+    transition: background 0.15s ease;
+  }
+  .dash-table tbody tr:hover {
+    background: var(--dash-table-hover) !important;
+  }
+
+  /* Type badge pill */
+  .dash-badge {
+    display: inline-block;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 800 !important;
+    background: rgba(249, 115, 22, 0.15) !important;
+    color: #c2410c !important; /* Solid dark orange */
+    border: 1px solid rgba(249, 115, 22, 0.30) !important;
+  }
+  .dark .dash-badge {
+    background: rgba(251, 146, 60, 0.2) !important;
+    color: #fdba74 !important;
+    border-color: rgba(251, 146, 60, 0.35) !important;
+  }
+</style>
+
+<!-- ── Dashboard Cards ── -->
+<div class="dash-grid">
+  <div class="dash-card dash-card--hero">
+    <span class="dash-card__icon">💰</span>
+    <p class="dash-card__label">Total Income</p>
+    <p class="dash-card__value">{{ total_income|floatformat:2 }}<span class="dash-card__currency">ETB</span></p>
   </div>
-  <div style="background: #1e1e2e; padding: 1.5rem; border-radius: 8px; border: 1px solid #333;">
-    <h3 style="margin: 0 0 0.5rem; color: #86efac;">Booking Payments</h3>
-    <p style="font-size: 1.4rem; font-weight: bold; margin: 0;">{{ booking_income|floatformat:2 }} ETB</p>
+  <div class="dash-card">
+    <span class="dash-card__icon">🏠</span>
+    <p class="dash-card__label">Booking Payments</p>
+    <p class="dash-card__value">{{ booking_income|floatformat:2 }}<span class="dash-card__currency"> ETB</span></p>
   </div>
-  <div style="background: #1e1e2e; padding: 1.5rem; border-radius: 8px; border: 1px solid #333;">
-    <h3 style="margin: 0 0 0.5rem; color: #93c5fd;">Listing Promotions</h3>
-    <p style="font-size: 1.4rem; font-weight: bold; margin: 0;">{{ promotion_income|floatformat:2 }} ETB</p>
+  <div class="dash-card">
+    <span class="dash-card__icon">⭐</span>
+    <p class="dash-card__label">Listing Promotions</p>
+    <p class="dash-card__value">{{ promotion_income|floatformat:2 }}<span class="dash-card__currency"> ETB</span></p>
   </div>
-  <div style="background: #1e1e2e; padding: 1.5rem; border-radius: 8px; border: 1px solid #333;">
-    <h3 style="margin: 0 0 0.5rem; color: #fcd34d;">Landlord Subscriptions</h3>
-    <p style="font-size: 1.4rem; font-weight: bold; margin: 0;">{{ landlord_sub_income|floatformat:2 }} ETB</p>
+  <div class="dash-card">
+    <span class="dash-card__icon">🏢</span>
+    <p class="dash-card__label">Landlord Subscriptions</p>
+    <p class="dash-card__value">{{ landlord_sub_income|floatformat:2 }}<span class="dash-card__currency"> ETB</span></p>
   </div>
-  <div style="background: #1e1e2e; padding: 1.5rem; border-radius: 8px; border: 1px solid #333;">
-    <h3 style="margin: 0 0 0.5rem; color: #f9a8d4;">Customer Premium</h3>
-    <p style="font-size: 1.4rem; font-weight: bold; margin: 0;">{{ customer_premium_income|floatformat:2 }} ETB</p>
+  <div class="dash-card">
+    <span class="dash-card__icon">💎</span>
+    <p class="dash-card__label">Customer Premium</p>
+    <p class="dash-card__value">{{ customer_premium_income|floatformat:2 }}<span class="dash-card__currency"> ETB</span></p>
   </div>
 </div>
 
-<h2>Recent Completed Payments</h2>
-<table style="width: 100%; border-collapse: collapse;">
+<!-- ── Recent Payments Table ── -->
+<h2 class="dash-section-title">Recent Completed Payments</h2>
+<table class="dash-table">
   <thead>
-    <tr style="border-bottom: 1px solid #444;">
-      <th style="text-align: left; padding: 0.5rem;">Type</th>
-      <th style="text-align: left; padding: 0.5rem;">Reference</th>
-      <th style="text-align: left; padding: 0.5rem;">User</th>
-      <th style="text-align: right; padding: 0.5rem;">Amount (ETB)</th>
-      <th style="text-align: left; padding: 0.5rem;">Date</th>
+    <tr>
+      <th>Type</th>
+      <th>Reference</th>
+      <th>User</th>
+      <th>Amount (ETB)</th>
+      <th>Date</th>
     </tr>
   </thead>
   <tbody>
     {% for p in recent_payments %}
-    <tr style="border-bottom: 1px solid #333;">
-      <td style="padding: 0.5rem;">{{ p.type }}</td>
-      <td style="padding: 0.5rem;">{{ p.ref }}</td>
-      <td style="padding: 0.5rem;">{{ p.user }}</td>
-      <td style="padding: 0.5rem; text-align: right;">{{ p.amount|floatformat:2 }}</td>
-      <td style="padding: 0.5rem;">{{ p.date }}</td>
+    <tr>
+      <td><span class="dash-badge">{{ p.type }}</span></td>
+      <td>{{ p.ref }}</td>
+      <td>{{ p.user }}</td>
+      <td>{{ p.amount|floatformat:2 }}</td>
+      <td>{{ p.date }}</td>
     </tr>
     {% empty %}
-    <tr><td colspan="5" style="padding: 1rem;">No completed payments yet.</td></tr>
+    <tr><td colspan="5" style="padding: 1.5rem; text-align: center; color: var(--dash-heading) !important; font-weight: bold;">No completed payments yet.</td></tr>
     {% endfor %}
   </tbody>
 </table>

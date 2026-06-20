@@ -37,8 +37,15 @@ def verify_otp(email, purpose, code):
     return False
 
 
+def _is_smtp_configured():
+    return bool(getattr(settings, "EMAIL_HOST_USER", "") and getattr(settings, "EMAIL_HOST_PASSWORD", ""))
+
+
 def send_otp_email(email, purpose, otp, extra_context=None):
-    """Send OTP email. Falls back to console logging when email is not configured."""
+    """
+    Send OTP email. Never raises — registration/auth must not fail if mail is down.
+    Returns True if sent successfully, False otherwise.
+    """
     extra_context = extra_context or {}
     plan_name = extra_context.get("plan_name", "")
     role = extra_context.get("role", "")
@@ -73,14 +80,28 @@ def send_otp_email(email, purpose, otp, extra_context=None):
 
     from_email = settings.DEFAULT_FROM_EMAIL
 
-    try:
-        send_mail(subject, body, from_email, [email], fail_silently=False)
-        logger.info("OTP email sent to %s (purpose=%s)", email, purpose)
-    except Exception as exc:
+    if not _is_smtp_configured():
         logger.warning(
-            "Email send failed for %s (purpose=%s): %s — OTP: %s",
+            "SMTP not configured — OTP for %s (purpose=%s) not emailed. "
+            "Set EMAIL_HOST_USER and EMAIL_HOST_PASSWORD on the server.",
             email,
             purpose,
-            exc,
-            otp,
         )
+        return False
+
+    try:
+        sent = send_mail(
+            subject,
+            body,
+            from_email,
+            [email],
+            fail_silently=True,
+        )
+        if sent:
+            logger.info("OTP email sent to %s (purpose=%s)", email, purpose)
+            return True
+        logger.warning("OTP email not sent to %s (purpose=%s) — send_mail returned 0", email, purpose)
+        return False
+    except Exception as exc:
+        logger.error("Email send failed for %s (purpose=%s): %s", email, purpose, exc)
+        return False

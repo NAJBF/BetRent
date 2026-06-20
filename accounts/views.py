@@ -53,11 +53,18 @@ class RegisterView(generics.CreateAPIView):
                 pass
 
         otp = store_otp(user.email, "register")
-        send_otp_email(
+        email_sent = send_otp_email(
             user.email,
             "register",
             otp,
             extra_context={"plan_name": plan_name, "role": user.role},
+        )
+
+        message = (
+            "Registration successful. Please check your email for the verification code."
+            if email_sent
+            else "Registration successful. We could not send the verification email right now. "
+            "Please use Resend OTP or try again shortly."
         )
 
         return Response(
@@ -68,7 +75,8 @@ class RegisterView(generics.CreateAPIView):
                 "role": user.role,
                 "email_verified": user.email_verified,
                 "account_status": user.account_status,
-                "message": "Registration successful. Please check your email for the verification code.",
+                "email_sent": email_sent,
+                "message": message,
             },
             status=status.HTTP_201_CREATED,
         )
@@ -179,8 +187,16 @@ class ResendOTPView(APIView):
             return Response({"detail": "Email is already verified."}, status=status.HTTP_400_BAD_REQUEST)
 
         otp = store_otp(email, purpose)
-        send_otp_email(email, purpose, otp, extra_context={"role": user.role})
-        return Response({"message": "A new verification code has been sent to your email."})
+        email_sent = send_otp_email(email, purpose, otp, extra_context={"role": user.role})
+        if email_sent:
+            return Response({"message": "A new verification code has been sent to your email.", "email_sent": True})
+        return Response(
+            {
+                "message": "Could not send email right now. Please try again in a few minutes.",
+                "email_sent": False,
+            },
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
 
 class ForgotPasswordView(APIView):
@@ -200,8 +216,17 @@ class ForgotPasswordView(APIView):
             return Response({"message": "If the email exists, a reset code has been sent."})
 
         otp = store_otp(email, "reset_password")
-        send_otp_email(email, "reset_password", otp)
-        return Response({"message": "If the email exists, a reset code has been sent."})
+        email_sent = send_otp_email(email, "reset_password", otp)
+        return Response(
+            {
+                "message": (
+                    "If the email exists, a reset code has been sent."
+                    if email_sent
+                    else "If the email exists, we could not send the reset code right now. Try again shortly."
+                ),
+                "email_sent": email_sent,
+            }
+        )
 
 
 class ResetPasswordView(APIView):
