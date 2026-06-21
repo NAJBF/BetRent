@@ -194,10 +194,14 @@ class UserSummarySerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class RenterContactSerializer(serializers.ModelSerializer):
-    """Full renter contact — only shown to landlord after booking approval."""
+class UserContactSerializer(serializers.ModelSerializer):
+    """Full user contact — shown after booking approval to the other party."""
 
     class Meta:
         model = User
         fields = ["id", "full_name", "email", "phone", "city", "avatar_url"]
         read_only_fields = fields
+
+
+class RenterContactSerializer(UserContactSerializer):
+    """Alias kept for backward compatibility."""

@@ -35,7 +35,7 @@ class MyRentalsView(generics.ListAPIView):
     def get_queryset(self):
         return (
             Booking.objects.filter(renter=self.request.user)
-            .select_related("listing", "renter")
+            .select_related("listing", "listing__owner", "renter")
         )
 
 
@@ -49,7 +49,7 @@ class MyBookingRequestsView(generics.ListAPIView):
     def get_queryset(self):
         return (
             Booking.objects.filter(listing__owner=self.request.user)
-            .select_related("listing", "renter")
+            .select_related("listing", "listing__owner", "renter")
         )
 
 

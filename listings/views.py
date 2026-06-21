@@ -117,9 +117,10 @@ class MyListingsView(generics.ListAPIView):
 
     def get_queryset(self):
         return (
-            Listing.objects.filter(owner=self.request.user)
+            Listing.objects.filter(owner=self.request.user, is_active=True)
             .select_related("category", "owner")
             .prefetch_related("images", "reviews", "bookings")
+            .order_by("-created_at")
         )
 
 

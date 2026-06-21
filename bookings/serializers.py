@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from .models import Booking
 from listings.models import Listing
-from accounts.serializers import RenterContactSerializer, UserSummarySerializer
+from accounts.serializers import UserContactSerializer, UserSummarySerializer
 
 
 APPROVED_STATUSES = ("approved", "paid", "active", "completed")
@@ -79,46 +79,92 @@ class BookingCreateSerializer(serializers.ModelSerializer):
 
 class BookingDetailSerializer(serializers.ModelSerializer):
     """
-    Detailed booking view.
-    Renter contact (phone, email) is only visible to the listing owner
-    after the booking is approved.
+    Detailed booking view with gated contact fields.
+
+    - Landlord sees renter phone/email after approval.
+    - Customer (renter) sees landlord phone/email after approval.
     """
 
     renter = serializers.SerializerMethodField()
+    landlord = serializers.SerializerMethodField()
     listing_title = serializers.CharField(source="listing.title", read_only=True)
     listing_slug = serializers.CharField(source="listing.slug", read_only=True)
     listing_city = serializers.CharField(source="listing.city", read_only=True)
     contact_visible = serializers.SerializerMethodField()
+    renter_contact_visible = serializers.SerializerMethodField()
+    landlord_contact_visible = serializers.SerializerMethodField()
 
     class Meta:
         model = Booking
         fields = [
             "id", "listing", "listing_title", "listing_slug", "listing_city",
-            "renter", "contact_visible", "start_date", "end_date", "total_price",
+            "renter", "landlord",
+            "contact_visible", "renter_contact_visible", "landlord_contact_visible",
+            "start_date", "end_date", "total_price",
             "deposit_amount", "status", "note", "cancellation_reason",
             "created_at", "updated_at",
         ]
 
-    def _can_see_contact(self, booking):
+    def _request_user(self):
         request = self.context.get("request")
         if not request or not request.user.is_authenticated:
+            return None
+        return request.user
+
+    def _is_approved(self, booking):
+        return booking.status in APPROVED_STATUSES
+
+    def _can_see_renter_contact(self, booking):
+        user = self._request_user()
+        if not user:
             return False
-        user = request.user
         if user.role == "admin":
             return True
-        if booking.renter == user:
-            return True
-        if booking.listing.owner == user and booking.status in APPROVED_STATUSES:
+        if booking.listing.owner == user and self._is_approved(booking):
             return True
         return False
 
+    def _can_see_landlord_contact(self, booking):
+        user = self._request_user()
+        if not user:
+            return False
+        if user.role == "admin":
+            return True
+        if booking.listing.owner == user:
+            return True
+        if booking.renter == user and self._is_approved(booking):
+            return True
+        return False
+
+    def get_renter_contact_visible(self, booking):
+        return self._can_see_renter_contact(booking)
+
+    def get_landlord_contact_visible(self, booking):
+        return self._can_see_landlord_contact(booking)
+
     def get_contact_visible(self, booking):
-        return self._can_see_contact(booking)
+        """True when the current user can see the other party's contact details."""
+        user = self._request_user()
+        if not user:
+            return False
+        if user.role == "admin":
+            return True
+        if booking.renter == user:
+            return self._can_see_landlord_contact(booking)
+        if booking.listing.owner == user:
+            return self._can_see_renter_contact(booking)
+        return False
 
     def get_renter(self, booking):
-        if self._can_see_contact(booking):
-            return RenterContactSerializer(booking.renter).data
+        if self._can_see_renter_contact(booking):
+            return UserContactSerializer(booking.renter).data
         return UserSummarySerializer(booking.renter).data
+
+    def get_landlord(self, booking):
+        owner = booking.listing.owner
+        if self._can_see_landlord_contact(booking):
+            return UserContactSerializer(owner).data
+        return UserSummarySerializer(owner).data
 
 
 class BookingStatusUpdateSerializer(serializers.Serializer):
